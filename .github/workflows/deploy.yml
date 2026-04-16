@@ -1,0 +1,110 @@
+name: Build & Deploy to Azure Container Apps
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY:        ${{ vars.ACR_LOGIN_SERVER }}       # e.g. myacr.azurecr.io
+  RESOURCE_GROUP:  ${{ vars.AZURE_RESOURCE_GROUP }}   # e.g. rg-capacity-planning
+  ACA_ENV:         ${{ vars.ACA_ENVIRONMENT }}        # e.g. cae-capacity-planning
+  BACKEND_APP:     capacity-backend
+  FRONTEND_APP:    capacity-frontend
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build & push images
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to ACR
+        run: az acr login --name ${{ vars.ACR_NAME }}
+
+      - name: Set image tag
+        id: meta
+        run: echo "tag=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/capacity-backend:${{ steps.meta.outputs.tag }}
+            ${{ env.REGISTRY }}/capacity-backend:latest
+
+      - name: Build & push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/capacity-frontend:${{ steps.meta.outputs.tag }}
+            ${{ env.REGISTRY }}/capacity-frontend:latest
+
+  # ────────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to Azure Container Apps
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # ── Backend ─────────────────────────────────────────────────────────────
+      - name: Deploy backend
+        uses: azure/container-apps-deploy-action@v1
+        with:
+          resourceGroup:        ${{ env.RESOURCE_GROUP }}
+          containerAppName:     ${{ env.BACKEND_APP }}
+          containerAppEnvironment: ${{ env.ACA_ENV }}
+          imageToDeploy:        ${{ env.REGISTRY }}/capacity-backend:${{ needs.build.outputs.image_tag }}
+          environmentVariables: >
+            DATABASE_URL=secretref:database-url
+
+      # ── Fetch backend FQDN for the frontend env var ─────────────────────────
+      - name: Get backend URL
+        id: backend_url
+        run: |
+          FQDN=$(az containerapp show \
+            --name ${{ env.BACKEND_APP }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          echo "url=https://${FQDN}" >> "$GITHUB_OUTPUT"
+
+      # ── Frontend ────────────────────────────────────────────────────────────
+      - name: Deploy frontend
+        uses: azure/container-apps-deploy-action@v1
+        with:
+          resourceGroup:        ${{ env.RESOURCE_GROUP }}
+          containerAppName:     ${{ env.FRONTEND_APP }}
+          containerAppEnvironment: ${{ env.ACA_ENV }}
+          imageToDeploy:        ${{ env.REGISTRY }}/capacity-frontend:${{ needs.build.outputs.image_tag }}
+          environmentVariables: >
+            BACKEND_URL=${{ steps.backend_url.outputs.url }}
+
+      - name: Print frontend URL
+        run: |
+          FQDN=$(az containerapp show \
+            --name ${{ env.FRONTEND_APP }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          echo "Frontend deployed at: https://${FQDN}"

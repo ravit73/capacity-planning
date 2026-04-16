@@ -45,8 +45,13 @@ capacity-planning/
 │       │   └── ManageTab.tsx         # Tab 3
 │       ├── hooks/useApi.ts
 │       └── types/index.ts
-├── docker-compose.yml       # PostgreSQL service
-└── start.sh                 # One-shot dev startup script
+├── docker-compose.yml       # PostgreSQL service (local dev)
+├── start.sh                 # One-shot dev startup script
+├── infra/
+│   └── provision.sh         # Azure CLI provisioning script
+└── .github/
+    └── workflows/
+        └── deploy.yml       # GitHub Actions CI/CD pipeline
 ```
 
 ## Data Model
@@ -158,3 +163,184 @@ The seed script (`backend/seed.py`) populates:
 **Projects**: Phoenix CRM, DataVault, MobileFirst, InfraScale, Analytics Hub, Internal, Leave
 
 The seed script is idempotent — safe to run multiple times.
+
+---
+
+## Deploying to Azure Container Apps
+
+### Architecture
+
+```
+Internet
+   │
+   ▼
+┌─────────────────────────────────┐
+│  Azure Container Apps (ACA)     │
+│                                 │
+│  ┌──────────────────────────┐   │
+│  │  capacity-frontend       │   │   nginx serves React SPA
+│  │  (nginx, port 80)        │   │   proxies /api → backend
+│  └──────────┬───────────────┘   │
+│             │ internal HTTP     │
+│  ┌──────────▼───────────────┐   │
+│  │  capacity-backend        │   │   FastAPI, port 8000
+│  │  (uvicorn, port 8000)    │   │   runs Alembic on startup
+│  └──────────┬───────────────┘   │
+└─────────────┼───────────────────┘
+              │ SSL (require)
+┌─────────────▼───────────────────┐
+│  Azure Database for PostgreSQL  │
+│  Flexible Server (Standard_B1ms)│
+└─────────────────────────────────┘
+```
+
+Azure resources created:
+
+| Resource | Purpose |
+|----------|---------|
+| Azure Container Registry (ACR) | Stores Docker images |
+| Container Apps Environment | Shared networking & observability |
+| Container App — backend | FastAPI API server |
+| Container App — frontend | nginx serving React + API proxy |
+| PostgreSQL Flexible Server | Managed database |
+| Log Analytics Workspace | Container logs & metrics |
+
+### Option A — One-shot provisioning script (quickest)
+
+> Requires: [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) ≥ 2.57 and the `containerapp` extension.
+
+```bash
+# Install the Container Apps extension (once)
+az extension add --name containerapp --upgrade
+
+# Log in
+az login
+
+# Run the provisioning script from the repo root
+./infra/provision.sh
+```
+
+The script will:
+1. Create a resource group
+2. Create an Azure Container Registry
+3. Create a PostgreSQL Flexible Server
+4. Create a Container Apps Environment (+ Log Analytics)
+5. Build and push both Docker images to ACR via `az acr build`
+6. Deploy the backend Container App (with `DATABASE_URL` as a secret)
+7. Deploy the frontend Container App (with `BACKEND_URL` env var pointing to the backend)
+8. Run a one-shot Container Apps Job to seed the database
+
+#### Customise before running
+
+Edit the variables at the top of `infra/provision.sh`:
+
+```bash
+LOCATION="westeurope"        # Azure region
+RG="rg-capacity-planning"    # Resource group name
+ACR_NAME="capacityplanningacr"  # Must be globally unique, lowercase
+PG_SERVER="psql-capacity-planning"  # Must be globally unique
+```
+
+Set a strong PostgreSQL password (or let the script auto-generate one):
+
+```bash
+export PG_PASSWORD="my-strong-password"
+./infra/provision.sh
+```
+
+### Option B — CI/CD with GitHub Actions
+
+The workflow in `.github/workflows/deploy.yml` runs on every push to `main` and:
+1. Builds and pushes both Docker images to ACR (tagged with the commit SHA)
+2. Deploys the backend Container App
+3. Fetches the backend FQDN and injects it into the frontend deployment
+4. Deploys the frontend Container App
+
+#### Setup steps
+
+**1. Create a service principal with Federated Identity Credentials** (no stored secrets):
+
+```bash
+APP_ID=$(az ad app create --display-name "capacity-planning-gh-actions" --query appId -o tsv)
+az ad sp create --id "$APP_ID"
+SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+TENANT_ID=$(az account show --query tenantId -o tsv)
+
+az role assignment create \
+  --assignee "$APP_ID" \
+  --role Contributor \
+  --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/rg-capacity-planning"
+
+# Allow GitHub Actions to federate
+az ad app federated-credential create --id "$APP_ID" --parameters '{
+  "name": "gh-actions",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:YOUR_GITHUB_ORG/capacity-planning:ref:refs/heads/main",
+  "audiences": ["api://AzureADTokenExchange"]
+}'
+```
+
+**2. Add GitHub Actions secrets** (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+|--------|-------|
+| `AZURE_CLIENT_ID` | App registration client ID (`$APP_ID`) |
+| `AZURE_TENANT_ID` | `$TENANT_ID` |
+| `AZURE_SUBSCRIPTION_ID` | `$SUBSCRIPTION_ID` |
+
+**3. Add GitHub Actions variables**:
+
+| Variable | Value |
+|----------|-------|
+| `ACR_NAME` | e.g. `capacityplanningacr` |
+| `ACR_LOGIN_SERVER` | e.g. `capacityplanningacr.azurecr.io` |
+| `AZURE_RESOURCE_GROUP` | e.g. `rg-capacity-planning` |
+| `ACA_ENVIRONMENT` | e.g. `cae-capacity-planning` |
+
+**4. Set the `DATABASE_URL` secret on the backend Container App** (run once after provisioning):
+
+```bash
+az containerapp secret set \
+  --name capacity-backend \
+  --resource-group rg-capacity-planning \
+  --secrets "database-url=postgresql+asyncpg://USER:PASS@HOST/DB?ssl=require"
+```
+
+Push to `main` to trigger the first deployment.
+
+### Useful post-deployment commands
+
+```bash
+# Tail live logs from the backend
+az containerapp logs show \
+  --name capacity-backend \
+  --resource-group rg-capacity-planning \
+  --follow
+
+# Scale backend to 0 replicas (cost saving when idle)
+az containerapp update \
+  --name capacity-backend \
+  --resource-group rg-capacity-planning \
+  --min-replicas 0
+
+# Re-run database seed job
+az containerapp job start \
+  --name capacity-seed-job \
+  --resource-group rg-capacity-planning
+
+# Tear everything down
+az group delete --name rg-capacity-planning --yes
+```
+
+### Cost estimate (West Europe, monthly)
+
+| Resource | SKU | Est. cost |
+|----------|-----|-----------|
+| Container Apps — backend | 0.5 vCPU / 1 GiB, 1 replica | ~$15 |
+| Container Apps — frontend | 0.25 vCPU / 0.5 GiB, 1 replica | ~$8 |
+| PostgreSQL Flexible Server | Standard_B1ms, 32 GiB | ~$15 |
+| Container Registry | Basic | ~$5 |
+| Log Analytics | Pay-per-GB | ~$2 |
+| **Total** | | **~$45 / month** |
+
+> Scale backend `min-replicas` to `0` to pay only for actual usage (billed per request at ~$0.000016 per vCPU-second).
