@@ -7,16 +7,17 @@ A full-stack web application for collecting and visualising monthly employee cap
 - **Monthly Entry** — spreadsheet-style matrix (employees × projects) with hours inputs, row/column totals, colour-coded utilisation, and one-click save
 - **Utilisation Charts** — horizontal bar charts showing employee utilisation vs. 168 h capacity and hours per project
 - **Manage** — add and soft-delete employees and projects in real time
-- Department filter and month selector shared across tabs
+- Department filter and month selector shared across all tabs
 
 ## Tech Stack
 
 | Layer | Technology |
-|-------|-----------|
+|-------|------------|
 | Backend | Python 3.11, FastAPI, Pydantic v2, SQLAlchemy 2 (async), Alembic |
 | Database | PostgreSQL 16 |
 | Package manager | [uv](https://docs.astral.sh/uv/) |
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS |
+| Container runtime | Docker / nginx |
 
 ## Project Structure
 
@@ -24,34 +25,41 @@ A full-stack web application for collecting and visualising monthly employee cap
 capacity-planning/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py          # FastAPI app + CORS
-│   │   ├── config.py        # Settings (reads .env)
-│   │   ├── database.py      # Async engine & session
-│   │   ├── models.py        # SQLAlchemy ORM models
-│   │   ├── schemas.py       # Pydantic v2 request/response schemas
+│   │   ├── main.py            # FastAPI app + CORS
+│   │   ├── config.py          # Settings (reads .env)
+│   │   ├── database.py        # Async engine & session factory
+│   │   ├── models.py          # SQLAlchemy ORM models
+│   │   ├── schemas.py         # Pydantic v2 request/response schemas
 │   │   └── api/
-│   │       ├── capacity.py  # POST /bulk, GET /?month=
-│   │       ├── employees.py # CRUD + /departments
-│   │       └── projects.py  # CRUD
-│   ├── alembic/             # Migrations
-│   ├── seed.py              # Seed script (employees, projects)
-│   └── pyproject.toml
+│   │       ├── capacity.py    # POST /bulk, GET /?month=
+│   │       ├── employees.py   # CRUD + /departments
+│   │       └── projects.py    # CRUD
+│   ├── alembic/               # Database migrations
+│   │   └── versions/
+│   │       └── 0001_initial_schema.py
+│   ├── Dockerfile             # Production image (uv + uvicorn)
+│   ├── seed.py                # Seed script — employees & projects
+│   └── pyproject.toml         # uv dependencies
 ├── frontend/
-│   └── src/
-│       ├── App.tsx
-│       ├── components/
-│       │   ├── MonthlyEntry.tsx      # Tab 1
-│       │   ├── UtilisationChart.tsx  # Tab 2
-│       │   └── ManageTab.tsx         # Tab 3
-│       ├── hooks/useApi.ts
-│       └── types/index.ts
-├── docker-compose.yml       # PostgreSQL service (local dev)
-├── start.sh                 # One-shot dev startup script
+│   ├── src/
+│   │   ├── App.tsx            # Root: tabs, month selector, dept filter
+│   │   ├── components/
+│   │   │   ├── MonthlyEntry.tsx       # Tab 1: matrix form
+│   │   │   ├── UtilisationChart.tsx   # Tab 2: bar charts
+│   │   │   └── ManageTab.tsx          # Tab 3: add/remove
+│   │   ├── hooks/useApi.ts    # API fetch hooks
+│   │   └── types/index.ts     # TypeScript types + capacity constants
+│   ├── Dockerfile             # Multi-stage: Node build → nginx runtime
+│   ├── nginx.conf             # SPA serving + /api proxy template
+│   └── vite.config.ts         # Dev proxy: /api → localhost:8000
 ├── infra/
-│   └── provision.sh         # Azure CLI provisioning script
-└── .github/
-    └── workflows/
-        └── deploy.yml       # GitHub Actions CI/CD pipeline
+│   └── provision.sh           # One-shot Azure CLI provisioning script
+├── .github/
+│   └── workflows/
+│       └── deploy.yml         # GitHub Actions CI/CD pipeline
+├── azure-pipelines.yml        # Azure DevOps CI/CD pipeline
+├── docker-compose.yml         # Local PostgreSQL service
+└── start.sh                   # One-shot local dev startup script
 ```
 
 ## Data Model
@@ -61,7 +69,7 @@ Department  ──<  Employee  ──<  CapacityEntry  >──  Project
                                  (month, hours)
 ```
 
-- **CapacityEntry** has a unique constraint on `(month, employee_id, project_id)` — bulk upsert is idempotent.
+- **CapacityEntry** has a unique constraint on `(month, employee_id, project_id)` — bulk upsert is fully idempotent.
 - All deletes are **soft** (`is_active = False`); records are never hard-deleted.
 
 ## API Endpoints
@@ -73,26 +81,28 @@ Department  ──<  Employee  ──<  CapacityEntry  >──  Project
 | `GET` | `/api/employees` | List active employees (with department) |
 | `POST` | `/api/employees` | Create employee |
 | `DELETE` | `/api/employees/{id}` | Soft-delete employee |
-| `GET` | `/api/employees/departments` | List departments |
+| `GET` | `/api/employees/departments` | List all departments |
 | `GET` | `/api/projects` | List active projects |
 | `POST` | `/api/projects` | Create project |
 | `DELETE` | `/api/projects/{id}` | Soft-delete project |
 
-Interactive docs available at **http://localhost:8000/docs** when the server is running.
+Interactive docs: **http://localhost:8000/docs**
 
 ## Capacity Thresholds
 
-| Condition | Hours | Colour |
-|-----------|-------|--------|
+| Condition | Hours | UI colour |
+|-----------|-------|-----------|
 | Over capacity | > 168 h | Red |
 | Fully planned | 160 – 168 h | Green |
 | Under-planned | < 160 h | Amber |
 
-## Getting Started
+---
+
+## Local Development
 
 ### Prerequisites
 
-- [Docker](https://docs.docker.com/get-docker/) (for PostgreSQL)
+- [Docker](https://docs.docker.com/get-docker/) — for local PostgreSQL
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) — Python package manager
 - [Node.js](https://nodejs.org/) 18+
 
@@ -102,53 +112,49 @@ Interactive docs available at **http://localhost:8000/docs** when the server is 
 ./start.sh
 ```
 
-This script will:
-1. Start PostgreSQL via Docker Compose
-2. Run Alembic migrations
-3. Seed the database (10 employees, 7 projects)
-4. Start the FastAPI backend on **http://localhost:8000**
-5. Start the Vite dev server on **http://localhost:5173**
+This script:
+1. Starts PostgreSQL via Docker Compose
+2. Runs Alembic migrations
+3. Seeds the database (10 employees, 7 projects)
+4. Starts the FastAPI backend on **http://localhost:8000**
+5. Starts the Vite dev server on **http://localhost:5173**
 
 ### Manual setup
 
-**Database**
+**1. Database**
 ```bash
 docker compose up -d db
 ```
 
-**Backend**
+**2. Backend**
 ```bash
 cd backend
-cp .env.example .env          # edit DATABASE_URL if needed
-uv sync                       # install dependencies
-uv run alembic upgrade head   # run migrations
-uv run python seed.py         # seed initial data
+echo "DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/capacity_planning" > .env
+uv sync                        # install dependencies
+uv run alembic upgrade head    # run migrations
+uv run python seed.py          # seed initial data
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
-**Frontend**
+**3. Frontend**
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run dev   # http://localhost:5173
 ```
 
-### Environment variables
+The Vite dev server proxies `/api/*` requests to `http://localhost:8000`.
 
-Create `backend/.env`:
-
-```env
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/capacity_planning
-```
+---
 
 ## Seed Data
 
-The seed script (`backend/seed.py`) populates:
+`backend/seed.py` is idempotent — safe to run multiple times.
 
 **Employees**
 
 | Name | Department |
-|------|-----------|
+|------|------------|
 | Anna Fischer | Engineering |
 | Ben Koch | Engineering |
 | Clara Maier | Design |
@@ -160,9 +166,7 @@ The seed script (`backend/seed.py`) populates:
 | Iris Müller | Product |
 | Jan Richter | Data |
 
-**Projects**: Phoenix CRM, DataVault, MobileFirst, InfraScale, Analytics Hub, Internal, Leave
-
-The seed script is idempotent — safe to run multiple times.
+**Projects**: Phoenix CRM · DataVault · MobileFirst · InfraScale · Analytics Hub · Internal · Leave
 
 ---
 
@@ -174,95 +178,113 @@ The seed script is idempotent — safe to run multiple times.
 Internet
    │
    ▼
-┌─────────────────────────────────┐
-│  Azure Container Apps (ACA)     │
-│                                 │
-│  ┌──────────────────────────┐   │
-│  │  capacity-frontend       │   │   nginx serves React SPA
-│  │  (nginx, port 80)        │   │   proxies /api → backend
-│  └──────────┬───────────────┘   │
-│             │ internal HTTP     │
-│  ┌──────────▼───────────────┐   │
-│  │  capacity-backend        │   │   FastAPI, port 8000
-│  │  (uvicorn, port 8000)    │   │   runs Alembic on startup
-│  └──────────┬───────────────┘   │
-└─────────────┼───────────────────┘
-              │ SSL (require)
-┌─────────────▼───────────────────┐
-│  Azure Database for PostgreSQL  │
-│  Flexible Server (Standard_B1ms)│
-└─────────────────────────────────┘
+┌───────────────────────────────────────┐
+│  Azure Container Apps Environment     │
+│                                       │
+│  ┌─────────────────────────────────┐  │
+│  │  capacity-frontend (nginx :80)  │  │  Serves React SPA
+│  │                                 │  │  Proxies /api → backend
+│  └────────────────┬────────────────┘  │
+│                   │ internal HTTPS    │
+│  ┌────────────────▼────────────────┐  │
+│  │  capacity-backend (uvicorn :8000)│  │  FastAPI + Alembic migrations
+│  └────────────────┬────────────────┘  │
+└───────────────────┼───────────────────┘
+                    │ SSL (required)
+┌───────────────────▼───────────────────┐
+│  Azure Database for PostgreSQL        │
+│  Flexible Server (Standard_B1ms)      │
+└───────────────────────────────────────┘
 ```
 
-Azure resources created:
+**Azure resources provisioned:**
 
 | Resource | Purpose |
 |----------|---------|
+| Resource Group | Logical container for all resources |
 | Azure Container Registry (ACR) | Stores Docker images |
-| Container Apps Environment | Shared networking & observability |
-| Container App — backend | FastAPI API server |
-| Container App — frontend | nginx serving React + API proxy |
-| PostgreSQL Flexible Server | Managed database |
+| Container Apps Environment | Shared networking & observability layer |
+| Container App — `capacity-backend` | FastAPI server, port 8000 |
+| Container App — `capacity-frontend` | nginx, port 80; proxies `/api` to backend |
+| PostgreSQL Flexible Server | Managed relational database |
 | Log Analytics Workspace | Container logs & metrics |
+| Container Apps Job — `capacity-seed-job` | One-shot database seeder |
 
-### Option A — One-shot provisioning script (quickest)
+---
 
-> Requires: [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) ≥ 2.57 and the `containerapp` extension.
+### Option A — One-shot provisioning script
+
+> Requires: [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) ≥ 2.57
 
 ```bash
-# Install the Container Apps extension (once)
+# Install the Container Apps CLI extension (once)
 az extension add --name containerapp --upgrade
 
-# Log in
 az login
 
-# Run the provisioning script from the repo root
-./infra/provision.sh
-```
-
-The script will:
-1. Create a resource group
-2. Create an Azure Container Registry
-3. Create a PostgreSQL Flexible Server
-4. Create a Container Apps Environment (+ Log Analytics)
-5. Build and push both Docker images to ACR via `az acr build`
-6. Deploy the backend Container App (with `DATABASE_URL` as a secret)
-7. Deploy the frontend Container App (with `BACKEND_URL` env var pointing to the backend)
-8. Run a one-shot Container Apps Job to seed the database
-
-#### Customise before running
-
-Edit the variables at the top of `infra/provision.sh`:
-
-```bash
-LOCATION="westeurope"        # Azure region
-RG="rg-capacity-planning"    # Resource group name
-ACR_NAME="capacityplanningacr"  # Must be globally unique, lowercase
-PG_SERVER="psql-capacity-planning"  # Must be globally unique
-```
-
-Set a strong PostgreSQL password (or let the script auto-generate one):
-
-```bash
+# Optional: set a strong Postgres password (auto-generated if omitted)
 export PG_PASSWORD="my-strong-password"
+
 ./infra/provision.sh
 ```
 
-### Option B — CI/CD with GitHub Actions
+**What the script does:**
+1. Creates the resource group
+2. Creates Azure Container Registry
+3. Creates PostgreSQL Flexible Server (~3 min)
+4. Creates the Container Apps Environment + Log Analytics workspace
+5. Builds and pushes both images via `az acr build` (no local Docker needed)
+6. Deploys the backend Container App (`DATABASE_URL` stored as a secret)
+7. Deploys the frontend Container App (`BACKEND_URL` injected from the backend FQDN)
+8. Runs the seed job as a Container Apps Job
 
-The workflow in `.github/workflows/deploy.yml` runs on every push to `main` and:
-1. Builds and pushes both Docker images to ACR (tagged with the commit SHA)
-2. Deploys the backend Container App
-3. Fetches the backend FQDN and injects it into the frontend deployment
-4. Deploys the frontend Container App
+**Customise** the variables at the top of `infra/provision.sh` before running:
+
+```bash
+LOCATION="westeurope"               # Azure region
+RG="rg-capacity-planning"           # Resource group name
+ACR_NAME="capacityplanningacr"      # Globally unique, lowercase, no hyphens
+PG_SERVER="psql-capacity-planning"  # Globally unique
+```
+
+---
+
+### Option B — GitHub Actions CI/CD
+
+File: `.github/workflows/deploy.yml`
+
+**Pipeline flow:**
+
+```
+push to main
+     │
+     ▼
+┌─────────────────────────────────────────┐
+│  Job: build (parallel)                  │
+│   ├── Build + push capacity-backend     │
+│   └── Build + push capacity-frontend    │
+└──────────────────┬──────────────────────┘
+                   │
+                   ▼
+┌──────────────────────────────────────────┐
+│  Job: deploy                             │
+│   1. Deploy backend container app        │
+│   2. Read backend FQDN                   │
+│   3. Deploy frontend (BACKEND_URL set)   │
+│   4. Print live URLs                     │
+└──────────────────────────────────────────┘
+```
+
+Images are tagged with the full Git commit SHA for traceability.
 
 #### Setup steps
 
-**1. Create a service principal with Federated Identity Credentials** (no stored secrets):
+**1. Create a service principal (Workload Identity Federation — no stored secrets)**
 
 ```bash
 APP_ID=$(az ad app create --display-name "capacity-planning-gh-actions" --query appId -o tsv)
 az ad sp create --id "$APP_ID"
+
 SUBSCRIPTION_ID=$(az account show --query id -o tsv)
 TENANT_ID=$(az account show --query tenantId -o tsv)
 
@@ -271,33 +293,32 @@ az role assignment create \
   --role Contributor \
   --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/rg-capacity-planning"
 
-# Allow GitHub Actions to federate
 az ad app federated-credential create --id "$APP_ID" --parameters '{
   "name": "gh-actions",
   "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "repo:YOUR_GITHUB_ORG/capacity-planning:ref:refs/heads/main",
+  "subject": "repo:YOUR_ORG/capacity-planning:ref:refs/heads/main",
   "audiences": ["api://AzureADTokenExchange"]
 }'
 ```
 
-**2. Add GitHub Actions secrets** (Settings → Secrets and variables → Actions):
+**2. Add GitHub Actions secrets** (Settings → Secrets and variables → Actions → Secrets):
 
 | Secret | Value |
 |--------|-------|
-| `AZURE_CLIENT_ID` | App registration client ID (`$APP_ID`) |
+| `AZURE_CLIENT_ID` | `$APP_ID` |
 | `AZURE_TENANT_ID` | `$TENANT_ID` |
 | `AZURE_SUBSCRIPTION_ID` | `$SUBSCRIPTION_ID` |
 
-**3. Add GitHub Actions variables**:
+**3. Add GitHub Actions variables** (Settings → Secrets and variables → Actions → Variables):
 
-| Variable | Value |
-|----------|-------|
-| `ACR_NAME` | e.g. `capacityplanningacr` |
-| `ACR_LOGIN_SERVER` | e.g. `capacityplanningacr.azurecr.io` |
-| `AZURE_RESOURCE_GROUP` | e.g. `rg-capacity-planning` |
-| `ACA_ENVIRONMENT` | e.g. `cae-capacity-planning` |
+| Variable | Example value |
+|----------|---------------|
+| `ACR_NAME` | `capacityplanningacr` |
+| `ACR_LOGIN_SERVER` | `capacityplanningacr.azurecr.io` |
+| `AZURE_RESOURCE_GROUP` | `rg-capacity-planning` |
+| `ACA_ENVIRONMENT` | `cae-capacity-planning` |
 
-**4. Set the `DATABASE_URL` secret on the backend Container App** (run once after provisioning):
+**4. Set the database secret on the backend Container App** (once, after provisioning):
 
 ```bash
 az containerapp secret set \
@@ -308,42 +329,49 @@ az containerapp secret set \
 
 Push to `main` to trigger the first deployment.
 
+---
+
 ### Option C — Azure DevOps Pipeline
 
-The pipeline in `azure-pipelines.yml` mirrors the GitHub Actions workflow but uses native Azure DevOps constructs: **service connections**, a **variable group**, and **deployment jobs** with an approval environment.
+File: `azure-pipelines.yml`
 
-#### Pipeline overview
+**Pipeline flow:**
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  Stage: Build (parallel jobs)                       │
-│   ├── BuildBackend  → Docker@2 → ACR               │
-│   └── BuildFrontend → Docker@2 → ACR               │
-└──────────────────────┬──────────────────────────────┘
-                       │ dependsOn: Build
-┌──────────────────────▼──────────────────────────────┐
-│  Stage: Deploy (deployment job)                     │
-│   1. az containerapp update  (backend)              │
-│   2. Get backend FQDN → pipeline variable           │
-│   3. az containerapp update  (frontend + BACKEND_URL)│
-│   4. Print final URLs                               │
-└─────────────────────────────────────────────────────┘
+push to main
+     │
+     ▼
+┌──────────────────────────────────────────┐
+│  Stage: Build (parallel jobs)            │
+│   ├── BuildBackend  → Docker@2 → ACR    │
+│   └── BuildFrontend → Docker@2 → ACR    │
+└──────────────────┬───────────────────────┘
+                   │ dependsOn: Build
+                   ▼
+┌──────────────────────────────────────────┐
+│  Stage: Deploy (deployment job)          │
+│   1. az containerapp update — backend    │
+│   2. Read backend FQDN (output variable) │
+│   3. az containerapp update — frontend   │
+│   4. Print live URLs                     │
+└──────────────────────────────────────────┘
 ```
+
+Images are tagged with `$(Build.SourceVersion)` (full commit SHA).
 
 #### One-time setup in Azure DevOps
 
-**1. Create a Docker Registry service connection**
+**1. Docker Registry service connection**
 
-Pipelines → Project Settings → Service connections → New → **Docker Registry**:
+Project Settings → Service connections → New → **Docker Registry (Azure Container Registry)**:
 
 | Field | Value |
 |-------|-------|
-| Registry type | Azure Container Registry |
 | Connection name | `acr-connection` |
-| Subscription | your subscription |
-| ACR | select your registry |
+| Subscription | your Azure subscription |
+| Azure container registry | select your ACR |
 
-**2. Create an Azure Resource Manager service connection**
+**2. Azure Resource Manager service connection**
 
 Service connections → New → **Azure Resource Manager** → Service principal (automatic):
 
@@ -353,57 +381,64 @@ Service connections → New → **Azure Resource Manager** → Service principal
 | Resource group | `rg-capacity-planning` |
 | Connection name | `azure-connection` |
 
-**3. Create a variable group**
+**3. Variable group**
 
-Pipelines → Library → Variable groups → **+ Variable group**:
-
-| Group name | `capacity-planning-vars` |
-|------------|--------------------------|
-
-Add these variables:
+Pipelines → Library → **+ Variable group** → name: `capacity-planning-vars`
 
 | Variable | Example value |
-|----------|--------------|
+|----------|---------------|
 | `ACR_LOGIN_SERVER` | `capacityplanningacr.azurecr.io` |
 | `RESOURCE_GROUP` | `rg-capacity-planning` |
 | `ACA_ENVIRONMENT` | `cae-capacity-planning` |
 
 **4. Create the pipeline**
 
-Pipelines → New pipeline → Azure Repos Git (or GitHub) → select repo → **Existing Azure Pipelines YAML file** → path: `/azure-pipelines.yml`.
+Pipelines → New pipeline → select repo → **Existing Azure Pipelines YAML file** → `/azure-pipelines.yml`
 
-**5. (Optional) Add an approval gate**
+**5. (Optional) Approval gate**
 
-Pipelines → Environments → **production** → Approvals and checks → **+ Approvals** → add approvers.
-This pauses the Deploy stage until a team member approves.
+Pipelines → Environments → **production** → Approvals and checks → **+ Approvals**.
+The Deploy stage pauses until an approver confirms before touching production.
 
-**6. Run**
+**6. Trigger**
 
-Push to `main` or click **Run pipeline** manually. The pipeline tags both images with the full commit SHA, deploys the backend first, reads its FQDN, then deploys the frontend with `BACKEND_URL` injected.
+Push to `main` or click **Run pipeline** manually.
 
 ---
 
-### Useful post-deployment commands
+### Deployment option comparison
+
+| | Option A (script) | Option B (GitHub Actions) | Option C (Azure DevOps) |
+|---|---|---|---|
+| Best for | First-time provisioning | GitHub-hosted repos | Azure DevOps projects |
+| Trigger | Manual | Push to `main` | Push to `main` |
+| Auth | `az login` | Workload Identity Federation | Service connections |
+| Approval gates | — | Environments (optional) | Environments + checks |
+| Image tagging | `latest` | Commit SHA + `latest` | Commit SHA + `latest` |
+
+---
+
+### Post-deployment commands
 
 ```bash
-# Tail live logs from the backend
+# Stream live backend logs
 az containerapp logs show \
   --name capacity-backend \
   --resource-group rg-capacity-planning \
   --follow
 
-# Scale backend to 0 replicas (cost saving when idle)
+# Scale to zero when idle (pay only for requests)
 az containerapp update \
   --name capacity-backend \
   --resource-group rg-capacity-planning \
   --min-replicas 0
 
-# Re-run database seed job
+# Re-run the database seed job
 az containerapp job start \
   --name capacity-seed-job \
   --resource-group rg-capacity-planning
 
-# Tear everything down
+# Tear down all resources
 az group delete --name rg-capacity-planning --yes
 ```
 
@@ -411,11 +446,11 @@ az group delete --name rg-capacity-planning --yes
 
 | Resource | SKU | Est. cost |
 |----------|-----|-----------|
-| Container Apps — backend | 0.5 vCPU / 1 GiB, 1 replica | ~$15 |
-| Container Apps — frontend | 0.25 vCPU / 0.5 GiB, 1 replica | ~$8 |
+| Container App — backend | 0.5 vCPU / 1 GiB, 1 replica | ~$15 |
+| Container App — frontend | 0.25 vCPU / 0.5 GiB, 1 replica | ~$8 |
 | PostgreSQL Flexible Server | Standard_B1ms, 32 GiB | ~$15 |
 | Container Registry | Basic | ~$5 |
 | Log Analytics | Pay-per-GB | ~$2 |
 | **Total** | | **~$45 / month** |
 
-> Scale backend `min-replicas` to `0` to pay only for actual usage (billed per request at ~$0.000016 per vCPU-second).
+> Set `--min-replicas 0` on both Container Apps to scale to zero when idle and pay only for active requests (~$0.000016 per vCPU-second).
