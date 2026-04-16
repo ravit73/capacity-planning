@@ -308,6 +308,81 @@ az containerapp secret set \
 
 Push to `main` to trigger the first deployment.
 
+### Option C — Azure DevOps Pipeline
+
+The pipeline in `azure-pipelines.yml` mirrors the GitHub Actions workflow but uses native Azure DevOps constructs: **service connections**, a **variable group**, and **deployment jobs** with an approval environment.
+
+#### Pipeline overview
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Stage: Build (parallel jobs)                       │
+│   ├── BuildBackend  → Docker@2 → ACR               │
+│   └── BuildFrontend → Docker@2 → ACR               │
+└──────────────────────┬──────────────────────────────┘
+                       │ dependsOn: Build
+┌──────────────────────▼──────────────────────────────┐
+│  Stage: Deploy (deployment job)                     │
+│   1. az containerapp update  (backend)              │
+│   2. Get backend FQDN → pipeline variable           │
+│   3. az containerapp update  (frontend + BACKEND_URL)│
+│   4. Print final URLs                               │
+└─────────────────────────────────────────────────────┘
+```
+
+#### One-time setup in Azure DevOps
+
+**1. Create a Docker Registry service connection**
+
+Pipelines → Project Settings → Service connections → New → **Docker Registry**:
+
+| Field | Value |
+|-------|-------|
+| Registry type | Azure Container Registry |
+| Connection name | `acr-connection` |
+| Subscription | your subscription |
+| ACR | select your registry |
+
+**2. Create an Azure Resource Manager service connection**
+
+Service connections → New → **Azure Resource Manager** → Service principal (automatic):
+
+| Field | Value |
+|-------|-------|
+| Scope | Subscription |
+| Resource group | `rg-capacity-planning` |
+| Connection name | `azure-connection` |
+
+**3. Create a variable group**
+
+Pipelines → Library → Variable groups → **+ Variable group**:
+
+| Group name | `capacity-planning-vars` |
+|------------|--------------------------|
+
+Add these variables:
+
+| Variable | Example value |
+|----------|--------------|
+| `ACR_LOGIN_SERVER` | `capacityplanningacr.azurecr.io` |
+| `RESOURCE_GROUP` | `rg-capacity-planning` |
+| `ACA_ENVIRONMENT` | `cae-capacity-planning` |
+
+**4. Create the pipeline**
+
+Pipelines → New pipeline → Azure Repos Git (or GitHub) → select repo → **Existing Azure Pipelines YAML file** → path: `/azure-pipelines.yml`.
+
+**5. (Optional) Add an approval gate**
+
+Pipelines → Environments → **production** → Approvals and checks → **+ Approvals** → add approvers.
+This pauses the Deploy stage until a team member approves.
+
+**6. Run**
+
+Push to `main` or click **Run pipeline** manually. The pipeline tags both images with the full commit SHA, deploys the backend first, reads its FQDN, then deploys the frontend with `BACKEND_URL` injected.
+
+---
+
 ### Useful post-deployment commands
 
 ```bash
