@@ -1,13 +1,14 @@
 # Capacity Planning
 
-A full-stack web application for collecting and visualising monthly employee capacity data across projects.
+A full-stack web application for collecting and visualising weekly employee capacity data across projects.
 
 ## Features
 
-- **Monthly Entry** — spreadsheet-style matrix (employees × projects) with hours inputs, row/column totals, colour-coded utilisation, and one-click save
-- **Utilisation Charts** — horizontal bar charts showing employee utilisation vs. 168 h capacity and hours per project
+- **Weekly Entry** — spreadsheet-style matrix (employees × projects) with hours inputs, row/column totals, colour-coded utilisation, and one-click save
+- **Utilisation Charts** — horizontal bar charts showing employee utilisation vs. 40 h weekly capacity and hours per project
 - **Manage** — add and soft-delete employees and projects in real time
-- Department filter and month selector shared across all tabs
+- Working week defined as **Monday – Friday**; week selector displays e.g. "21 Apr – 25 Apr 2026"
+- Department filter and week selector shared across all tabs
 
 ## Tech Stack
 
@@ -31,20 +32,21 @@ capacity-planning/
 │   │   ├── models.py          # SQLAlchemy ORM models
 │   │   ├── schemas.py         # Pydantic v2 request/response schemas
 │   │   └── api/
-│   │       ├── capacity.py    # POST /bulk, GET /?month=
+│   │       ├── capacity.py    # POST /bulk, GET /?week=
 │   │       ├── employees.py   # CRUD + /departments
 │   │       └── projects.py    # CRUD
 │   ├── alembic/               # Database migrations
 │   │   └── versions/
-│   │       └── 0001_initial_schema.py
+│   │       ├── 0001_initial_schema.py
+│   │       └── 0002_rename_month_to_week.py
 │   ├── Dockerfile             # Production image (uv + uvicorn)
 │   ├── seed.py                # Seed script — employees & projects
 │   └── pyproject.toml         # uv dependencies
 ├── frontend/
 │   ├── src/
-│   │   ├── App.tsx            # Root: tabs, month selector, dept filter
+│   │   ├── App.tsx            # Root: tabs, week selector, dept filter
 │   │   ├── components/
-│   │   │   ├── MonthlyEntry.tsx       # Tab 1: matrix form
+│   │   │   ├── WeeklyEntry.tsx        # Tab 1: matrix form
 │   │   │   ├── UtilisationChart.tsx   # Tab 2: bar charts
 │   │   │   └── ManageTab.tsx          # Tab 3: add/remove
 │   │   ├── hooks/useApi.ts    # API fetch hooks
@@ -66,18 +68,19 @@ capacity-planning/
 
 ```
 Department  ──<  Employee  ──<  CapacityEntry  >──  Project
-                                 (month, hours)
+                                 (week, hours)
 ```
 
-- **CapacityEntry** has a unique constraint on `(month, employee_id, project_id)` — bulk upsert is fully idempotent.
+- **CapacityEntry.week** is always stored as the **Monday** of the ISO week (normalised server-side).
+- Unique constraint on `(week, employee_id, project_id)` — bulk upsert is fully idempotent.
 - All deletes are **soft** (`is_active = False`); records are never hard-deleted.
 
 ## API Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/capacity/bulk` | Upsert a list of capacity entries for a month |
-| `GET` | `/api/capacity?month=YYYY-MM` | Fetch all entries for a month |
+| `POST` | `/api/capacity/bulk` | Upsert a list of capacity entries for a week |
+| `GET` | `/api/capacity?week=YYYY-MM-DD` | Fetch all entries for the week containing that date |
 | `GET` | `/api/employees` | List active employees (with department) |
 | `POST` | `/api/employees` | Create employee |
 | `DELETE` | `/api/employees/{id}` | Soft-delete employee |
@@ -90,11 +93,13 @@ Interactive docs: **http://localhost:8000/docs**
 
 ## Capacity Thresholds
 
+Working week = **Monday – Friday (40 h)**
+
 | Condition | Hours | UI colour |
 |-----------|-------|-----------|
-| Over capacity | > 168 h | Red |
-| Fully planned | 160 – 168 h | Green |
-| Under-planned | < 160 h | Amber |
+| Over capacity | > 40 h | Red |
+| Fully planned | 38 – 40 h | Green |
+| Under-planned | < 38 h | Amber |
 
 ---
 
