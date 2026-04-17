@@ -5,6 +5,7 @@ import {
   CapacityEntry,
   WeeklyPayload,
   Department,
+  PublicHoliday,
 } from "../types";
 
 const BASE = "/api";
@@ -144,4 +145,38 @@ export function useCapacity(week: string) {
   };
 
   return { entries, loading, saving, error, refresh, saveWeek };
+}
+
+export function useHolidays() {
+  const [holidays, setHolidays] = useState<PublicHoliday[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    try {
+      setLoading(true);
+      const data = await apiFetch<PublicHoliday[]>("/holidays");
+      setHolidays(data);
+    } catch {
+      // non-fatal
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const createHoliday = async (date: string, name: string) => {
+    await apiFetch("/holidays", {
+      method: "POST",
+      body: JSON.stringify({ date, name }),
+    });
+    await refresh();
+  };
+
+  const deleteHoliday = async (id: number) => {
+    await apiFetch(`/holidays/${id}`, { method: "DELETE" });
+    await refresh();
+  };
+
+  return { holidays, loading, createHoliday, deleteHoliday, refresh };
 }

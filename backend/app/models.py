@@ -50,3 +50,12 @@ class CapacityEntry(Base):
     __table_args__ = (
         UniqueConstraint("week", "employee_id", "project_id", name="uq_capacity_entry"),
     )
+
+
+class PublicHoliday(Base):
+    __tablename__ = "public_holidays"
+
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(Date, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)

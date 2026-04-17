@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import WeeklyEntry from "./components/WeeklyEntry";
 import UtilisationChart from "./components/UtilisationChart";
 import ManageTab from "./components/ManageTab";
@@ -7,17 +7,16 @@ import {
   useProjects,
   useDepartments,
   useCapacity,
+  useHolidays,
 } from "./hooks/useApi";
 
 type Tab = "entry" | "utilisation" | "manage";
 
-/** Return the Monday of the ISO week containing d. */
 function toMonday(d: Date): Date {
-  const day = d.getDay(); // 0=Sun
-  const diff = day === 0 ? -6 : 1 - day;
-  const monday = new Date(d);
-  monday.setDate(d.getDate() + diff);
-  return monday;
+  const diff = d.getDay() === 0 ? -6 : 1 - d.getDay();
+  const m = new Date(d);
+  m.setDate(d.getDate() + diff);
+  return m;
 }
 
 function toISODate(d: Date): string {
@@ -34,44 +33,16 @@ function formatWeekRange(monday: string): string {
   const start = new Date(monday);
   const end = new Date(monday);
   end.setDate(start.getDate() + 4); // Mon → Fri (working week)
-
-  const fmt = (d: Date) =>
-    d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-
-  const startStr = fmt(start);
-  const endStr = fmt(end);
-  const year = end.getFullYear();
-
-  // Avoid duplicating the year if both ends are in the same year
-  return `${startStr} – ${endStr} ${year}`;
+  const fmt = (d: Date) => d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return `${fmt(start)} – ${fmt(end)} ${end.getFullYear()}`;
 }
 
-function WeekSelector({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-}) {
+function WeekSelector({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
     <div className="flex items-center gap-2">
-      <button
-        onClick={() => onChange(addWeeks(value, -1))}
-        className="p-1 rounded hover:bg-gray-200 text-gray-600 transition-colors"
-        aria-label="Previous week"
-      >
-        ←
-      </button>
-      <span className="font-semibold text-gray-800 min-w-[190px] text-center text-sm">
-        {formatWeekRange(value)}
-      </span>
-      <button
-        onClick={() => onChange(addWeeks(value, 1))}
-        className="p-1 rounded hover:bg-gray-200 text-gray-600 transition-colors"
-        aria-label="Next week"
-      >
-        →
-      </button>
+      <button onClick={() => onChange(addWeeks(value, -1))} className="p-1 rounded hover:bg-gray-200 text-gray-600 transition-colors" aria-label="Previous week">←</button>
+      <span className="font-semibold text-gray-800 min-w-[190px] text-center text-sm">{formatWeekRange(value)}</span>
+      <button onClick={() => onChange(addWeeks(value, 1))} className="p-1 rounded hover:bg-gray-200 text-gray-600 transition-colors" aria-label="Next week">→</button>
     </div>
   );
 }
@@ -85,6 +56,18 @@ export default function App() {
   const { projects, loading: projLoading, createProject, deleteProject } = useProjects();
   const { departments } = useDepartments();
   const { entries } = useCapacity(week);
+  const { holidays, createHoliday, deleteHoliday } = useHolidays();
+
+  // Filter holidays to Mon–Fri of the current week
+  const weekHolidays = useMemo(() => {
+    const mon = new Date(week);
+    const fri = new Date(week);
+    fri.setDate(mon.getDate() + 4);
+    return holidays.filter((h) => {
+      const d = new Date(h.date);
+      return d >= mon && d <= fri;
+    });
+  }, [holidays, week]);
 
   const loading = empLoading || projLoading;
 
@@ -96,7 +79,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
       <header className="bg-white border-b border-gray-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
@@ -115,9 +97,7 @@ export default function App() {
               <label className="text-sm text-gray-500">Dept:</label>
               <select
                 value={deptFilter}
-                onChange={(e) =>
-                  setDeptFilter(e.target.value === "all" ? "all" : Number(e.target.value))
-                }
+                onChange={(e) => setDeptFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
                 className="border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-400"
               >
                 <option value="all">All</option>
@@ -129,7 +109,6 @@ export default function App() {
           )}
         </div>
 
-        {/* Tabs */}
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <nav className="flex gap-0 -mb-px">
             {tabs.map(({ id, label }) => (
@@ -143,13 +122,17 @@ export default function App() {
                 }`}
               >
                 {label}
+                {id === "entry" && weekHolidays.length > 0 && (
+                  <span className="ml-1.5 px-1.5 py-0.5 text-xs bg-red-100 text-red-600 rounded-full">
+                    {weekHolidays.length}🗓
+                  </span>
+                )}
               </button>
             ))}
           </nav>
         </div>
       </header>
 
-      {/* Main */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
         {loading && <div className="text-center py-20 text-gray-400">Loading…</div>}
         {!loading && (
@@ -158,6 +141,7 @@ export default function App() {
               <WeeklyEntry
                 employees={employees}
                 projects={projects}
+                weekHolidays={weekHolidays}
                 departmentFilter={deptFilter}
                 week={week}
               />
@@ -167,6 +151,7 @@ export default function App() {
                 employees={employees}
                 projects={projects}
                 entries={entries}
+                weekHolidays={weekHolidays}
                 departmentFilter={deptFilter}
               />
             )}
@@ -175,10 +160,13 @@ export default function App() {
                 employees={employees}
                 projects={projects}
                 departments={departments}
+                holidays={holidays}
                 onCreateEmployee={createEmployee}
                 onDeleteEmployee={deleteEmployee}
                 onCreateProject={createProject}
                 onDeleteProject={deleteProject}
+                onCreateHoliday={createHoliday}
+                onDeleteHoliday={deleteHoliday}
               />
             )}
           </>

@@ -71,3 +71,18 @@ class CapacityEntryOut(BaseModel):
     hours: float
 
     model_config = {"from_attributes": True}
+
+
+# Public Holiday
+class PublicHolidayCreate(BaseModel):
+    date: date
+    name: str
+
+
+class PublicHolidayOut(BaseModel):
+    id: int
+    date: date
+    name: str
+    is_active: bool
+
+    model_config = {"from_attributes": True}

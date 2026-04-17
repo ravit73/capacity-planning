@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import capacity, employees, projects
+from .api import capacity, employees, projects, holidays
 
 app = FastAPI(title="Capacity Planning API", version="0.1.0")
 
@@ -16,6 +16,7 @@ app.add_middleware(
 app.include_router(capacity.router)
 app.include_router(employees.router)
 app.include_router(projects.router)
+app.include_router(holidays.router)
 
 
 @app.get("/health")

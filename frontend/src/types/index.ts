@@ -37,5 +37,13 @@ export interface WeeklyPayload {
   entries: CapacityEntryIn[];
 }
 
+export interface PublicHoliday {
+  id: number;
+  date: string; // ISO date string YYYY-MM-DD
+  name: string;
+  is_active: boolean;
+}
+
 export const WEEKLY_CAPACITY = 40;
+export const HOURS_PER_DAY = 8;
 export const FULLY_PLANNED = 38;    // 95 % of weekly capacity
