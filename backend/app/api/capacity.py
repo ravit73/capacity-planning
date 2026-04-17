@@ -4,8 +4,9 @@ from sqlalchemy import select, text
 from datetime import date, timedelta
 
 from ..database import get_db
-from ..models import CapacityEntry
+from ..models import CapacityEntry, User
 from ..schemas import WeeklyPayload, CapacityEntryOut
+from ..auth import get_current_user, require_roles
 
 router = APIRouter(prefix="/api/capacity", tags=["capacity"])
 
@@ -15,7 +16,11 @@ def to_monday(d: date) -> date:
 
 
 @router.post("/bulk", response_model=list[CapacityEntryOut])
-async def bulk_upsert(payload: WeeklyPayload, db: AsyncSession = Depends(get_db)):
+async def bulk_upsert(
+    payload: WeeklyPayload,
+    _: User = Depends(require_roles("admin", "editor")),
+    db: AsyncSession = Depends(get_db),
+):
     if not payload.entries:
         return []
 
@@ -57,7 +62,11 @@ async def bulk_upsert(payload: WeeklyPayload, db: AsyncSession = Depends(get_db)
 
 
 @router.get("", response_model=list[CapacityEntryOut])
-async def get_capacity(week: str, db: AsyncSession = Depends(get_db)):
+async def get_capacity(
+    week: str,
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Accept week as YYYY-MM-DD; normalises to Monday of that week."""
     try:
         week_date = to_monday(date.fromisoformat(week))

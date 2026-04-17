@@ -6,6 +6,7 @@ import {
   CapacityEntryIn,
   WEEKLY_CAPACITY,
   HOURS_PER_DAY,
+  UserRole,
 } from "../types";
 import { useCapacity } from "../hooks/useApi";
 
@@ -15,6 +16,7 @@ interface Props {
   weekHolidays: PublicHoliday[];
   departmentFilter: number | "all";
   week: string; // Monday ISO date YYYY-MM-DD
+  userRole: UserRole;
 }
 
 type HoursMap = Record<string, number>;
@@ -44,7 +46,8 @@ function Avatar({ name }: { name: string }) {
   );
 }
 
-export default function WeeklyEntry({ employees, projects, weekHolidays, departmentFilter, week }: Props) {
+export default function WeeklyEntry({ employees, projects, weekHolidays, departmentFilter, week, userRole }: Props) {
+  const readonly = userRole === "reader";
   const { entries, loading, saving, error, saveWeek } = useCapacity(week);
   const [hours, setHours] = useState<HoursMap>({});
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -173,18 +176,25 @@ export default function WeeklyEntry({ employees, projects, weekHolidays, departm
         </div>
       )}
 
-      {/* Action buttons */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <button onClick={fillSample} className="px-3 py-1.5 text-sm bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md hover:bg-indigo-100 transition-colors">
-          Fill sample data
-        </button>
-        <button onClick={() => setHours({})} className="px-3 py-1.5 text-sm bg-gray-50 text-gray-700 border border-gray-200 rounded-md hover:bg-gray-100 transition-colors">
-          Clear
-        </button>
-        <button onClick={handleSave} disabled={saving} className="px-4 py-1.5 text-sm bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 transition-colors ml-auto">
-          {saving ? "Saving…" : "Save week"}
-        </button>
-      </div>
+      {/* Action buttons — hidden for readers */}
+      {!readonly && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={fillSample} className="px-3 py-1.5 text-sm bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md hover:bg-indigo-100 transition-colors">
+            Fill sample data
+          </button>
+          <button onClick={() => setHours({})} className="px-3 py-1.5 text-sm bg-gray-50 text-gray-700 border border-gray-200 rounded-md hover:bg-gray-100 transition-colors">
+            Clear
+          </button>
+          <button onClick={handleSave} disabled={saving} className="px-4 py-1.5 text-sm bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 transition-colors ml-auto">
+            {saving ? "Saving…" : "Save week"}
+          </button>
+        </div>
+      )}
+      {readonly && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-200 rounded-md text-xs text-gray-500">
+          View-only — you have the <span className="font-semibold text-gray-600 mx-1">reader</span> role
+        </div>
+      )}
 
       {saveSuccess && (
         <div className="p-2 bg-green-50 border border-green-200 rounded text-green-700 text-sm">Saved successfully!</div>
@@ -242,8 +252,13 @@ export default function WeeklyEntry({ employees, projects, weekHolidays, departm
                         max="80"
                         step="0.5"
                         value={getValue(emp.id, proj.id)}
-                        onChange={(e) => handleChange(emp.id, proj.id, e.target.value)}
-                        className="w-16 text-center border border-gray-200 rounded px-1 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-400 focus:border-indigo-400 bg-white"
+                        onChange={(e) => !readonly && handleChange(emp.id, proj.id, e.target.value)}
+                        readOnly={readonly}
+                        className={`w-16 text-center border rounded px-1 py-0.5 text-sm focus:outline-none ${
+                          readonly
+                            ? "border-gray-100 bg-gray-50 text-gray-500 cursor-default"
+                            : "border-gray-200 bg-white focus:ring-1 focus:ring-indigo-400 focus:border-indigo-400"
+                        }`}
                         placeholder="0"
                       />
                     </td>

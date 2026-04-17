@@ -44,6 +44,18 @@ export interface PublicHoliday {
   is_active: boolean;
 }
 
+export type UserRole = "admin" | "editor" | "reader";
+
+export interface AppUser {
+  id: number;
+  azure_oid: string;
+  email: string;
+  display_name: string;
+  role: UserRole;
+  is_active: boolean;
+  created_at: string;
+}
+
 export const WEEKLY_CAPACITY = 40;
 export const HOURS_PER_DAY = 8;
 export const FULLY_PLANNED = 38;    // 95 % of weekly capacity

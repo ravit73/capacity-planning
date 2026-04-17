@@ -2,13 +2,17 @@ import { useState, useMemo } from "react";
 import WeeklyEntry from "./components/WeeklyEntry";
 import UtilisationChart from "./components/UtilisationChart";
 import ManageTab from "./components/ManageTab";
+import LoginPage from "./components/LoginPage";
 import {
   useEmployees,
   useProjects,
   useDepartments,
   useCapacity,
   useHolidays,
+  setTokenProvider,
 } from "./hooks/useApi";
+import { useAuth } from "./auth/AuthContext";
+import { UserRole } from "./types";
 
 type Tab = "entry" | "utilisation" | "manage";
 
@@ -32,7 +36,7 @@ function addWeeks(isoDate: string, n: number): string {
 function formatWeekRange(monday: string): string {
   const start = new Date(monday);
   const end = new Date(monday);
-  end.setDate(start.getDate() + 4); // Mon → Fri (working week)
+  end.setDate(start.getDate() + 4);
   const fmt = (d: Date) => d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
   return `${fmt(start)} – ${fmt(end)} ${end.getFullYear()}`;
 }
@@ -47,7 +51,18 @@ function WeekSelector({ value, onChange }: { value: string; onChange: (v: string
   );
 }
 
+function roleBadgeClass(role: UserRole): string {
+  if (role === "admin") return "bg-indigo-100 text-indigo-700";
+  if (role === "editor") return "bg-green-100 text-green-700";
+  return "bg-gray-100 text-gray-600";
+}
+
 export default function App() {
+  const { user, loading: authLoading, isAuthenticated, getAccessToken, login, logout } = useAuth();
+
+  // Register token provider before data hooks run
+  useMemo(() => { setTokenProvider(getAccessToken); }, [getAccessToken]);
+
   const [tab, setTab] = useState<Tab>("entry");
   const [week, setWeek] = useState<string>(() => toISODate(toMonday(new Date())));
   const [deptFilter, setDeptFilter] = useState<number | "all">("all");
@@ -58,7 +73,6 @@ export default function App() {
   const { entries } = useCapacity(week);
   const { holidays, createHoliday, deleteHoliday } = useHolidays();
 
-  // Filter holidays to Mon–Fri of the current week
   const weekHolidays = useMemo(() => {
     const mon = new Date(week);
     const fri = new Date(week);
@@ -69,13 +83,28 @@ export default function App() {
     });
   }, [holidays, week]);
 
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center text-gray-400">
+        Loading…
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginPage onLogin={login} />;
+  }
+
+  const role = (user?.role ?? "reader") as UserRole;
   const loading = empLoading || projLoading;
 
-  const tabs: { id: Tab; label: string }[] = [
+  const tabs: { id: Tab; label: string; adminOnly?: boolean }[] = [
     { id: "entry", label: "Weekly Entry" },
     { id: "utilisation", label: "Utilisation" },
-    { id: "manage", label: "Manage" },
+    { id: "manage", label: "Manage", adminOnly: true },
   ];
+
+  const visibleTabs = tabs.filter((t) => !t.adminOnly || role === "admin");
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -107,11 +136,26 @@ export default function App() {
               </select>
             </div>
           )}
+
+          {user && (
+            <div className="flex items-center gap-2 ml-auto">
+              <span className="text-sm text-gray-600 hidden sm:block">{user.display_name}</span>
+              <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${roleBadgeClass(role)}`}>
+                {role}
+              </span>
+              <button
+                onClick={logout}
+                className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded hover:bg-gray-100 transition-colors"
+              >
+                Sign out
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <nav className="flex gap-0 -mb-px">
-            {tabs.map(({ id, label }) => (
+            {visibleTabs.map(({ id, label }) => (
               <button
                 key={id}
                 onClick={() => setTab(id)}
@@ -144,6 +188,7 @@ export default function App() {
                 weekHolidays={weekHolidays}
                 departmentFilter={deptFilter}
                 week={week}
+                userRole={role}
               />
             )}
             {tab === "utilisation" && (
@@ -155,7 +200,7 @@ export default function App() {
                 departmentFilter={deptFilter}
               />
             )}
-            {tab === "manage" && (
+            {tab === "manage" && role === "admin" && (
               <ManageTab
                 employees={employees}
                 projects={projects}

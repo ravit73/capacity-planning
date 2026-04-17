@@ -4,14 +4,19 @@ from sqlalchemy import select
 from datetime import date, timedelta
 
 from ..database import get_db
-from ..models import PublicHoliday
+from ..models import PublicHoliday, User
 from ..schemas import PublicHolidayCreate, PublicHolidayOut
+from ..auth import get_current_user, require_roles
 
 router = APIRouter(prefix="/api/holidays", tags=["holidays"])
 
 
 @router.get("", response_model=list[PublicHolidayOut])
-async def list_holidays(week: str | None = None, db: AsyncSession = Depends(get_db)):
+async def list_holidays(
+    week: str | None = None,
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Return all active public holidays.
     If ?week=YYYY-MM-DD is provided, return only holidays within that Mon–Fri range."""
     stmt = select(PublicHoliday).where(PublicHoliday.is_active == True)
@@ -30,7 +35,11 @@ async def list_holidays(week: str | None = None, db: AsyncSession = Depends(get_
 
 
 @router.post("", response_model=PublicHolidayOut, status_code=201)
-async def create_holiday(data: PublicHolidayCreate, db: AsyncSession = Depends(get_db)):
+async def create_holiday(
+    data: PublicHolidayCreate,
+    _: User = Depends(require_roles("admin")),
+    db: AsyncSession = Depends(get_db),
+):
     holiday = PublicHoliday(date=data.date, name=data.name)
     db.add(holiday)
     await db.commit()
@@ -39,7 +48,11 @@ async def create_holiday(data: PublicHolidayCreate, db: AsyncSession = Depends(g
 
 
 @router.delete("/{holiday_id}", status_code=204)
-async def delete_holiday(holiday_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_holiday(
+    holiday_id: int,
+    _: User = Depends(require_roles("admin")),
+    db: AsyncSession = Depends(get_db),
+):
     holiday = await db.get(PublicHoliday, holiday_id)
     if not holiday:
         raise HTTPException(status_code=404, detail="Holiday not found")

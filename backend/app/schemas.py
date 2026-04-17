@@ -1,5 +1,5 @@
 from pydantic import BaseModel, field_validator
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 
 def to_monday(d: date) -> date:
@@ -86,3 +86,27 @@ class PublicHolidayOut(BaseModel):
     is_active: bool
 
     model_config = {"from_attributes": True}
+
+
+# User
+class UserOut(BaseModel):
+    id: int
+    azure_oid: str
+    email: str
+    display_name: str
+    role: str
+    is_active: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class UserRoleUpdate(BaseModel):
+    role: str
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        if v not in ("admin", "editor", "reader"):
+            raise ValueError("role must be admin, editor, or reader")
+        return v

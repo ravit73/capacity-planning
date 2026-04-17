@@ -4,14 +4,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from ..database import get_db
-from ..models import Employee, Department
+from ..models import Employee, Department, User
 from ..schemas import EmployeeCreate, EmployeeOut, DepartmentOut
+from ..auth import get_current_user, require_roles
 
 router = APIRouter(prefix="/api/employees", tags=["employees"])
 
 
 @router.get("", response_model=list[EmployeeOut])
-async def list_employees(db: AsyncSession = Depends(get_db)):
+async def list_employees(
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(
         select(Employee)
         .options(selectinload(Employee.department))
@@ -22,7 +26,11 @@ async def list_employees(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("", response_model=EmployeeOut, status_code=201)
-async def create_employee(data: EmployeeCreate, db: AsyncSession = Depends(get_db)):
+async def create_employee(
+    data: EmployeeCreate,
+    _: User = Depends(require_roles("admin")),
+    db: AsyncSession = Depends(get_db),
+):
     dept = await db.get(Department, data.department_id)
     if not dept:
         raise HTTPException(status_code=404, detail="Department not found")
@@ -32,7 +40,6 @@ async def create_employee(data: EmployeeCreate, db: AsyncSession = Depends(get_d
     await db.commit()
     await db.refresh(employee)
 
-    # reload with department
     result = await db.execute(
         select(Employee)
         .options(selectinload(Employee.department))
@@ -42,7 +49,11 @@ async def create_employee(data: EmployeeCreate, db: AsyncSession = Depends(get_d
 
 
 @router.delete("/{employee_id}", status_code=204)
-async def delete_employee(employee_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_employee(
+    employee_id: int,
+    _: User = Depends(require_roles("admin")),
+    db: AsyncSession = Depends(get_db),
+):
     employee = await db.get(Employee, employee_id)
     if not employee:
         raise HTTPException(status_code=404, detail="Employee not found")
@@ -51,6 +62,9 @@ async def delete_employee(employee_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/departments", response_model=list[DepartmentOut])
-async def list_departments(db: AsyncSession = Depends(get_db)):
+async def list_departments(
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(select(Department).order_by(Department.name))
     return result.scalars().all()

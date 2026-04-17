@@ -10,11 +10,27 @@ import {
 
 const BASE = "/api";
 
-async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
+// Token provider registered by AuthProvider so all API calls include Bearer token
+type TokenProvider = () => Promise<string | null>;
+let _tokenProvider: TokenProvider | null = null;
+
+export function setTokenProvider(fn: TokenProvider): void {
+  _tokenProvider = fn;
+}
+
+async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+
+  if (_tokenProvider) {
+    const token = await _tokenProvider();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  }
+
   const res = await fetch(`${BASE}${url}`, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers: { ...headers, ...(options.headers as Record<string, string> ?? {}) },
   });
+
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`API error ${res.status}: ${text}`);
