@@ -9,7 +9,7 @@ A full-stack web application for collecting and visualising weekly employee capa
 - **Weekly Entry** — spreadsheet-style matrix (employees × projects) with hours inputs, row/column totals, colour-coded utilisation, and one-click save
 - **Public Holidays** — holiday days shown as read-only red columns in the matrix; available capacity automatically reduced (8 h per holiday day)
 - **Utilisation Charts** — horizontal bar charts showing employee utilisation vs. available weekly capacity and hours per project
-- **Manage** — add/remove employees, projects, and public holidays in real time (admin only)
+- **Manage** — add/remove employees, projects, public holidays, and users in real time (admin only)
 - Working week defined as **Monday – Friday (40 h)**; week selector displays e.g. "21 Apr – 25 Apr 2026"
 - Department filter and week selector shared across all tabs
 
@@ -48,7 +48,8 @@ capacity-planning/
 │   │       ├── 0001_initial_schema.py
 │   │       ├── 0002_rename_month_to_week.py
 │   │       ├── 0003_add_public_holidays.py
-│   │       └── 0004_add_users.py
+│   │       ├── 0004_add_users.py
+│   │       └── 0005_users_azure_oid_nullable.py
 │   ├── Dockerfile             # Production image (uv + uvicorn)
 │   ├── seed.py                # Seed script — employees & projects
 │   ├── .env.example           # Required environment variables
@@ -64,7 +65,7 @@ capacity-planning/
 │   │   ├── components/
 │   │   │   ├── WeeklyEntry.tsx        # Tab 1: matrix + role-based controls
 │   │   │   ├── UtilisationChart.tsx   # Tab 2: bar charts
-│   │   │   ├── ManageTab.tsx          # Tab 3: employees, projects, holidays
+│   │   │   ├── ManageTab.tsx          # Tab 3: employees, projects, holidays, users
 │   │   │   └── LoginPage.tsx          # Microsoft sign-in screen
 │   │   ├── hooks/useApi.ts    # API fetch hooks with Bearer token injection
 │   │   └── types/index.ts     # TypeScript types + capacity constants + AppUser
@@ -94,7 +95,7 @@ User  (azure_oid, email, display_name, role)
 
 - **CapacityEntry.week** is always stored as the **Monday** of the ISO week (normalised server-side).
 - **PublicHoliday** stores a specific calendar date and name. When one or more holidays fall within the selected Mon–Fri week, each deducts 8 h from the available capacity and appears as a read-only column in the matrix.
-- **User** is auto-created on first login from the Microsoft token claims (`oid`, `preferred_username`, `name`). The first user to log in becomes `admin`; subsequent users start as `reader`. Role is updatable by any admin via `PUT /api/users/{id}/role`.
+- **User** stores pre-provisioned accounts. `azure_oid` is nullable — it is bound permanently on the user's first login. The first login ever (empty `users` table) **bootstraps one admin** automatically. All subsequent logins are rejected unless the email is already in the table.
 - Unique constraint on `(week, employee_id, project_id)` — bulk upsert is fully idempotent.
 - All deletes are **soft** (`is_active = False`); records are never hard-deleted.
 
@@ -110,20 +111,58 @@ Authentication uses **Microsoft Entra ID** (formerly Azure AD). The backend vali
 | `editor` | Full edit + save | ✓ | Hidden | — |
 | `admin` | Full edit + save | ✓ | Full access | Change roles |
 
-### Promoting a user
+### How user access works
 
-Roles are managed via the API (no UI admin panel yet):
+Access is **allowlist-based**:
+
+1. An admin pre-provisions a user by adding their email address and role to the `users` table.
+2. When that person signs in with Microsoft, the app matches their email, binds their Microsoft identity (`azure_oid`), and grants access.
+3. Any Microsoft account whose email is **not** in the `users` table is denied with a 403 error.
+
+The **first person to ever log in** (empty `users` table) is automatically made `admin` — this bootstraps the system.
+
+### Adding users (UI)
+
+1. Log in as an `admin`.
+2. Go to the **Manage** tab.
+3. Scroll to the **Users** section.
+4. Enter the user's **email address** (must match their Microsoft account), an optional **display name**, and select a **role**.
+5. Click **Add User**.
+
+The user can now sign in with their Microsoft account. Their display name is updated from their Microsoft profile on first login.
+
+### Changing a user's role
+
+In the **Manage → Users** section, use the role dropdown next to any user to change their role immediately.
+
+### Removing a user
+
+Click **Remove** next to the user in **Manage → Users**. This deactivates the account (soft delete); the user will receive a 403 on their next request.
+
+### Managing users via API
 
 ```bash
 # List all users
 curl -H "Authorization: Bearer <token>" https://your-app/api/users
 
-# Promote to editor
+# Pre-provision a new user
+curl -X POST \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "alice@example.com", "display_name": "Alice", "role": "editor"}' \
+  https://your-app/api/users
+
+# Change a user's role
 curl -X PUT \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"role": "editor"}' \
   https://your-app/api/users/2/role
+
+# Deactivate a user
+curl -X DELETE \
+  -H "Authorization: Bearer <token>" \
+  https://your-app/api/users/2
 ```
 
 ## API Endpoints
@@ -134,8 +173,9 @@ All endpoints require a valid `Authorization: Bearer <token>` header. Write oper
 |--------|------|-----------|-------------|
 | `GET` | `/api/users/me` | any | Current user info and role |
 | `GET` | `/api/users` | admin | List all users |
+| `POST` | `/api/users` | admin | Pre-provision a user by email |
 | `PUT` | `/api/users/{id}/role` | admin | Update a user's role |
-| `PATCH` | `/api/users/{id}/active` | admin | Activate / deactivate a user |
+| `DELETE` | `/api/users/{id}` | admin | Deactivate a user (soft delete) |
 | `POST` | `/api/capacity/bulk` | editor | Upsert capacity entries for a week |
 | `GET` | `/api/capacity?week=YYYY-MM-DD` | any | Fetch all entries for the week |
 | `GET` | `/api/employees` | any | List active employees (with department) |
