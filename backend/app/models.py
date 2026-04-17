@@ -39,7 +39,7 @@ class CapacityEntry(Base):
     __tablename__ = "capacity_entries"
 
     id = Column(Integer, primary_key=True, index=True)
-    month = Column(Date, nullable=False)
+    week = Column(Date, nullable=False)  # always the Monday of the week
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
     hours = Column(Float, nullable=False)
@@ -48,5 +48,5 @@ class CapacityEntry(Base):
     project = relationship("Project", back_populates="capacity_entries")
 
     __table_args__ = (
-        UniqueConstraint("month", "employee_id", "project_id", name="uq_capacity_entry"),
+        UniqueConstraint("week", "employee_id", "project_id", name="uq_capacity_entry"),
     )

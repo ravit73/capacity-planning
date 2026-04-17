@@ -20,22 +20,22 @@ export interface Project {
 
 export interface CapacityEntry {
   id: number;
-  month: string;
+  week: string;      // ISO date string — always the Monday of the week
   employee_id: number;
   project_id: number;
   hours: number;
 }
 
 export interface CapacityEntryIn {
-  month: string;
+  week: string;
   employee_id: number;
   project_id: number;
   hours: number;
 }
 
-export interface MonthlyPayload {
+export interface WeeklyPayload {
   entries: CapacityEntryIn[];
 }
 
-export const MONTHLY_CAPACITY = 168;
-export const FULLY_PLANNED = 160;
+export const WEEKLY_CAPACITY = 40;
+export const FULLY_PLANNED = 38;    // 95 % of weekly capacity

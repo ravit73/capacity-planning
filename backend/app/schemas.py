@@ -1,5 +1,10 @@
 from pydantic import BaseModel, field_validator
-from datetime import date
+from datetime import date, timedelta
+
+
+def to_monday(d: date) -> date:
+    """Return the Monday of the ISO week containing d."""
+    return d - timedelta(days=d.weekday())
 
 
 # Department
@@ -43,24 +48,24 @@ class ProjectOut(BaseModel):
 
 # Capacity
 class CapacityEntryIn(BaseModel):
-    month: date
+    week: date
     employee_id: int
     project_id: int
     hours: float
 
-    @field_validator("month")
+    @field_validator("week")
     @classmethod
-    def normalize_to_first_of_month(cls, v: date) -> date:
-        return v.replace(day=1)
+    def normalize_to_monday(cls, v: date) -> date:
+        return to_monday(v)
 
 
-class MonthlyPayload(BaseModel):
+class WeeklyPayload(BaseModel):
     entries: list[CapacityEntryIn]
 
 
 class CapacityEntryOut(BaseModel):
     id: int
-    month: date
+    week: date
     employee_id: int
     project_id: int
     hours: float

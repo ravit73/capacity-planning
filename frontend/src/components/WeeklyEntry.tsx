@@ -1,12 +1,12 @@
 import { useState, useEffect, useMemo } from "react";
-import { Employee, Project, CapacityEntryIn, MONTHLY_CAPACITY, FULLY_PLANNED } from "../types";
+import { Employee, Project, CapacityEntryIn, WEEKLY_CAPACITY, FULLY_PLANNED } from "../types";
 import { useCapacity } from "../hooks/useApi";
 
 interface Props {
   employees: Employee[];
   projects: Project[];
   departmentFilter: number | "all";
-  month: string;
+  week: string; // Monday ISO date string YYYY-MM-DD
 }
 
 type HoursMap = Record<string, number>; // key: `${empId}_${projId}`
@@ -15,14 +15,14 @@ function cellKey(empId: number, projId: number) {
   return `${empId}_${projId}`;
 }
 
-function getRowColor(total: number): string {
-  if (total > MONTHLY_CAPACITY) return "text-red-600 font-bold";
+function getRowColorClass(total: number): string {
+  if (total > WEEKLY_CAPACITY) return "text-red-600 font-bold";
   if (total >= FULLY_PLANNED) return "text-green-600 font-bold";
   return "text-amber-500 font-semibold";
 }
 
-function getRowBg(total: number): string {
-  if (total > MONTHLY_CAPACITY) return "bg-red-50";
+function getRowBgClass(total: number): string {
+  if (total > WEEKLY_CAPACITY) return "bg-red-50";
   if (total >= FULLY_PLANNED) return "bg-green-50";
   return "";
 }
@@ -35,23 +35,21 @@ function Avatar({ name }: { name: string }) {
     .join("")
     .toUpperCase();
   const colors = [
-    "bg-blue-500","bg-indigo-500","bg-purple-500","bg-pink-500",
-    "bg-red-500","bg-orange-500","bg-amber-500","bg-teal-500",
+    "bg-blue-500", "bg-indigo-500", "bg-purple-500", "bg-pink-500",
+    "bg-red-500", "bg-orange-500", "bg-amber-500", "bg-teal-500",
   ];
-  const idx = name.charCodeAt(0) % colors.length;
   return (
-    <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-white text-xs font-semibold shrink-0 ${colors[idx]}`}>
+    <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-white text-xs font-semibold shrink-0 ${colors[name.charCodeAt(0) % colors.length]}`}>
       {initials}
     </span>
   );
 }
 
-export default function MonthlyEntry({ employees, projects, departmentFilter, month }: Props) {
-  const { entries, loading, saving, error, saveMonth } = useCapacity(month);
+export default function WeeklyEntry({ employees, projects, departmentFilter, week }: Props) {
+  const { entries, loading, saving, error, saveWeek } = useCapacity(week);
   const [hours, setHours] = useState<HoursMap>({});
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  // Sync loaded entries into local state
   useEffect(() => {
     const map: HoursMap = {};
     for (const e of entries) {
@@ -60,8 +58,8 @@ export default function MonthlyEntry({ employees, projects, departmentFilter, mo
     setHours(map);
   }, [entries]);
 
-  const filteredEmployees = useMemo(() =>
-    departmentFilter === "all"
+  const filteredEmployees = useMemo(
+    () => departmentFilter === "all"
       ? employees
       : employees.filter((e) => e.department_id === departmentFilter),
     [employees, departmentFilter]
@@ -85,30 +83,26 @@ export default function MonthlyEntry({ employees, projects, departmentFilter, mo
     });
   };
 
-  const rowTotal = (empId: number): number =>
+  const rowTotal = (empId: number) =>
     projects.reduce((s, p) => s + (hours[cellKey(empId, p.id)] ?? 0), 0);
 
-  const colTotal = (projId: number): number =>
+  const colTotal = (projId: number) =>
     filteredEmployees.reduce((s, e) => s + (hours[cellKey(e.id, projId)] ?? 0), 0);
 
   const grandTotal = filteredEmployees.reduce((s, e) => s + rowTotal(e.id), 0);
-
-  // Stats
-  const overCapacity = filteredEmployees.filter((e) => rowTotal(e.id) > MONTHLY_CAPACITY).length;
+  const overCapacity = filteredEmployees.filter((e) => rowTotal(e.id) > WEEKLY_CAPACITY).length;
   const avgUtil = filteredEmployees.length
-    ? (filteredEmployees.reduce((s, e) => s + rowTotal(e.id), 0) /
-        (filteredEmployees.length * MONTHLY_CAPACITY)) *
-      100
+    ? (grandTotal / (filteredEmployees.length * WEEKLY_CAPACITY)) * 100
     : 0;
 
   const fillSample = () => {
     const samples: HoursMap = {};
     for (const emp of filteredEmployees) {
-      let remaining = 160;
+      let remaining = FULLY_PLANNED;
       const shuffled = [...projects].sort(() => Math.random() - 0.5);
       for (const proj of shuffled) {
         if (remaining <= 0) break;
-        const h = Math.min(remaining, Math.round(Math.random() * 60 + 10));
+        const h = Math.min(remaining, Math.round(Math.random() * 12 + 2));
         samples[cellKey(emp.id, proj.id)] = h;
         remaining -= h;
       }
@@ -116,25 +110,18 @@ export default function MonthlyEntry({ employees, projects, departmentFilter, mo
     setHours((prev) => ({ ...prev, ...samples }));
   };
 
-  const clearAll = () => setHours({});
-
   const handleSave = async () => {
     const entriesToSave: CapacityEntryIn[] = [];
     for (const emp of employees) {
       for (const proj of projects) {
         const h = hours[cellKey(emp.id, proj.id)];
         if (h !== undefined && h > 0) {
-          entriesToSave.push({
-            month: `${month}-01`,
-            employee_id: emp.id,
-            project_id: proj.id,
-            hours: h,
-          });
+          entriesToSave.push({ week, employee_id: emp.id, project_id: proj.id, hours: h });
         }
       }
     }
     try {
-      await saveMonth({ entries: entriesToSave });
+      await saveWeek({ entries: entriesToSave });
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch {
@@ -143,19 +130,17 @@ export default function MonthlyEntry({ employees, projects, departmentFilter, mo
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64 text-gray-500">
-        Loading…
-      </div>
-    );
+    return <div className="flex items-center justify-center h-64 text-gray-500">Loading…</div>;
   }
+
+  const fmt = (n: number) => n.toFixed(n % 1 === 0 ? 0 : 1);
 
   return (
     <div className="space-y-4">
       {/* Stat cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <StatCard label="Employees" value={filteredEmployees.length} />
-        <StatCard label="Total Hours" value={grandTotal.toFixed(0)} />
+        <StatCard label="Total Hours" value={fmt(grandTotal)} />
         <StatCard label="Avg Utilisation" value={`${avgUtil.toFixed(1)}%`} />
         <StatCard
           label="Over Capacity"
@@ -173,7 +158,7 @@ export default function MonthlyEntry({ employees, projects, departmentFilter, mo
           Fill sample data
         </button>
         <button
-          onClick={clearAll}
+          onClick={() => setHours({})}
           className="px-3 py-1.5 text-sm bg-gray-50 text-gray-700 border border-gray-200 rounded-md hover:bg-gray-100 transition-colors"
         >
           Clear
@@ -183,7 +168,7 @@ export default function MonthlyEntry({ employees, projects, departmentFilter, mo
           disabled={saving}
           className="px-4 py-1.5 text-sm bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 transition-colors ml-auto"
         >
-          {saving ? "Saving…" : "Save month"}
+          {saving ? "Saving…" : "Save week"}
         </button>
       </div>
 
@@ -198,7 +183,7 @@ export default function MonthlyEntry({ employees, projects, departmentFilter, mo
         </div>
       )}
 
-      {/* Matrix table */}
+      {/* Matrix */}
       <div className="overflow-x-auto rounded-lg border border-gray-200 shadow-sm">
         <table className="min-w-full text-sm">
           <thead>
@@ -208,14 +193,11 @@ export default function MonthlyEntry({ employees, projects, departmentFilter, mo
               </th>
               {projects.map((p) => (
                 <th key={p.id} className="px-2 py-2 text-center font-medium text-gray-600 min-w-[90px] whitespace-nowrap">
-                  <span
-                    className="inline-block w-2 h-2 rounded-full mr-1 align-middle"
-                    style={{ backgroundColor: p.color_hex }}
-                  />
+                  <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ backgroundColor: p.color_hex }} />
                   {p.name}
                 </th>
               ))}
-              <th className="px-3 py-2 text-center font-semibold text-gray-700 min-w-[70px] whitespace-nowrap">
+              <th className="px-3 py-2 text-center font-semibold text-gray-700 min-w-[70px]">
                 Total
               </th>
             </tr>
@@ -226,7 +208,7 @@ export default function MonthlyEntry({ employees, projects, departmentFilter, mo
               return (
                 <tr
                   key={emp.id}
-                  className={`border-b border-gray-100 ${getRowBg(total)} ${idx % 2 === 0 ? "" : "bg-gray-50/50"}`}
+                  className={`border-b border-gray-100 ${getRowBgClass(total)} ${idx % 2 === 0 ? "" : "bg-gray-50/50"}`}
                 >
                   <td className="sticky left-0 z-10 bg-inherit px-3 py-1.5">
                     <div className="flex items-center gap-2">
@@ -242,7 +224,7 @@ export default function MonthlyEntry({ employees, projects, departmentFilter, mo
                       <input
                         type="number"
                         min="0"
-                        max="744"
+                        max="80"
                         step="0.5"
                         value={getValue(emp.id, proj.id)}
                         onChange={(e) => handleChange(emp.id, proj.id, e.target.value)}
@@ -251,8 +233,8 @@ export default function MonthlyEntry({ employees, projects, departmentFilter, mo
                       />
                     </td>
                   ))}
-                  <td className={`px-3 py-1.5 text-center text-sm font-semibold ${getRowColor(total)}`}>
-                    {total > 0 ? total.toFixed(total % 1 === 0 ? 0 : 1) : "–"}
+                  <td className={`px-3 py-1.5 text-center text-sm ${getRowColorClass(total)}`}>
+                    {total > 0 ? fmt(total) : "–"}
                   </td>
                 </tr>
               );
@@ -260,19 +242,17 @@ export default function MonthlyEntry({ employees, projects, departmentFilter, mo
           </tbody>
           <tfoot>
             <tr className="bg-gray-100 border-t-2 border-gray-300 font-semibold">
-              <td className="sticky left-0 bg-gray-100 px-3 py-2 text-gray-700">
-                Total
-              </td>
+              <td className="sticky left-0 bg-gray-100 px-3 py-2 text-gray-700">Total</td>
               {projects.map((p) => {
                 const ct = colTotal(p.id);
                 return (
                   <td key={p.id} className="px-2 py-2 text-center text-gray-700">
-                    {ct > 0 ? ct.toFixed(ct % 1 === 0 ? 0 : 1) : "–"}
+                    {ct > 0 ? fmt(ct) : "–"}
                   </td>
                 );
               })}
               <td className="px-3 py-2 text-center text-gray-900">
-                {grandTotal > 0 ? grandTotal.toFixed(grandTotal % 1 === 0 ? 0 : 1) : "–"}
+                {grandTotal > 0 ? fmt(grandTotal) : "–"}
               </td>
             </tr>
           </tfoot>
@@ -289,20 +269,16 @@ export default function MonthlyEntry({ employees, projects, departmentFilter, mo
 }
 
 function StatCard({
-  label,
-  value,
-  highlight,
+  label, value, highlight,
 }: {
   label: string;
   value: string | number;
   highlight?: "red" | "green";
 }) {
   const textColor =
-    highlight === "red"
-      ? "text-red-600"
-      : highlight === "green"
-      ? "text-green-600"
-      : "text-indigo-700";
+    highlight === "red" ? "text-red-600"
+    : highlight === "green" ? "text-green-600"
+    : "text-indigo-700";
   return (
     <div className="bg-white border border-gray-200 rounded-lg px-4 py-3 shadow-sm">
       <div className={`text-2xl font-bold ${textColor}`}>{value}</div>

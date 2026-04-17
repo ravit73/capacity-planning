@@ -1,5 +1,5 @@
 import { useState } from "react";
-import MonthlyEntry from "./components/MonthlyEntry";
+import WeeklyEntry from "./components/WeeklyEntry";
 import UtilisationChart from "./components/UtilisationChart";
 import ManageTab from "./components/ManageTab";
 import {
@@ -11,47 +11,64 @@ import {
 
 type Tab = "entry" | "utilisation" | "manage";
 
-function formatMonth(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+/** Return the Monday of the ISO week containing d. */
+function toMonday(d: Date): Date {
+  const day = d.getDay(); // 0=Sun
+  const diff = day === 0 ? -6 : 1 - day;
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + diff);
+  return monday;
 }
 
-function MonthSelector({
+function toISODate(d: Date): string {
+  return d.toISOString().split("T")[0];
+}
+
+function addWeeks(isoDate: string, n: number): string {
+  const d = new Date(isoDate);
+  d.setDate(d.getDate() + n * 7);
+  return toISODate(d);
+}
+
+function formatWeekRange(monday: string): string {
+  const start = new Date(monday);
+  const end = new Date(monday);
+  end.setDate(start.getDate() + 6);
+
+  const fmt = (d: Date) =>
+    d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+
+  const startStr = fmt(start);
+  const endStr = fmt(end);
+  const year = end.getFullYear();
+
+  // Avoid duplicating the year if both ends are in the same year
+  return `${startStr} – ${endStr} ${year}`;
+}
+
+function WeekSelector({
   value,
   onChange,
 }: {
   value: string;
   onChange: (v: string) => void;
 }) {
-  const prev = () => {
-    const [y, m] = value.split("-").map(Number);
-    const d = new Date(y, m - 2, 1);
-    onChange(formatMonth(d));
-  };
-  const next = () => {
-    const [y, m] = value.split("-").map(Number);
-    const d = new Date(y, m, 1);
-    onChange(formatMonth(d));
-  };
-  const label = new Date(
-    parseInt(value.split("-")[0]),
-    parseInt(value.split("-")[1]) - 1,
-    1
-  ).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
-
   return (
     <div className="flex items-center gap-2">
       <button
-        onClick={prev}
+        onClick={() => onChange(addWeeks(value, -1))}
         className="p-1 rounded hover:bg-gray-200 text-gray-600 transition-colors"
-        aria-label="Previous month"
+        aria-label="Previous week"
       >
         ←
       </button>
-      <span className="font-semibold text-gray-800 min-w-[140px] text-center">{label}</span>
+      <span className="font-semibold text-gray-800 min-w-[190px] text-center text-sm">
+        {formatWeekRange(value)}
+      </span>
       <button
-        onClick={next}
+        onClick={() => onChange(addWeeks(value, 1))}
         className="p-1 rounded hover:bg-gray-200 text-gray-600 transition-colors"
-        aria-label="Next month"
+        aria-label="Next week"
       >
         →
       </button>
@@ -61,18 +78,18 @@ function MonthSelector({
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("entry");
-  const [month, setMonth] = useState<string>(formatMonth(new Date()));
+  const [week, setWeek] = useState<string>(() => toISODate(toMonday(new Date())));
   const [deptFilter, setDeptFilter] = useState<number | "all">("all");
 
   const { employees, loading: empLoading, createEmployee, deleteEmployee } = useEmployees();
   const { projects, loading: projLoading, createProject, deleteProject } = useProjects();
   const { departments } = useDepartments();
-  const { entries } = useCapacity(month);
+  const { entries } = useCapacity(week);
 
   const loading = empLoading || projLoading;
 
   const tabs: { id: Tab; label: string }[] = [
-    { id: "entry", label: "Monthly Entry" },
+    { id: "entry", label: "Weekly Entry" },
     { id: "utilisation", label: "Utilisation" },
     { id: "manage", label: "Manage" },
   ];
@@ -90,7 +107,7 @@ export default function App() {
           </div>
 
           {(tab === "entry" || tab === "utilisation") && (
-            <MonthSelector value={month} onChange={setMonth} />
+            <WeekSelector value={week} onChange={setWeek} />
           )}
 
           {(tab === "entry" || tab === "utilisation") && (
@@ -99,17 +116,13 @@ export default function App() {
               <select
                 value={deptFilter}
                 onChange={(e) =>
-                  setDeptFilter(
-                    e.target.value === "all" ? "all" : Number(e.target.value)
-                  )
+                  setDeptFilter(e.target.value === "all" ? "all" : Number(e.target.value))
                 }
                 className="border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-400"
               >
                 <option value="all">All</option>
                 {departments.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
+                  <option key={d.id} value={d.id}>{d.name}</option>
                 ))}
               </select>
             </div>
@@ -136,19 +149,17 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main content */}
+      {/* Main */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
-        {loading && (
-          <div className="text-center py-20 text-gray-400">Loading…</div>
-        )}
+        {loading && <div className="text-center py-20 text-gray-400">Loading…</div>}
         {!loading && (
           <>
             {tab === "entry" && (
-              <MonthlyEntry
+              <WeeklyEntry
                 employees={employees}
                 projects={projects}
                 departmentFilter={deptFilter}
-                month={month}
+                week={week}
               />
             )}
             {tab === "utilisation" && (

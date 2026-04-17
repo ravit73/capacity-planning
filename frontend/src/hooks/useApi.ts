@@ -3,7 +3,7 @@ import {
   Employee,
   Project,
   CapacityEntry,
-  MonthlyPayload,
+  WeeklyPayload,
   Department,
 } from "../types";
 
@@ -40,9 +40,7 @@ export function useEmployees() {
     }
   }, []);
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  useEffect(() => { refresh(); }, [refresh]);
 
   const createEmployee = async (name: string, department_id: number) => {
     await apiFetch("/employees", {
@@ -78,9 +76,7 @@ export function useProjects() {
     }
   }, []);
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  useEffect(() => { refresh(); }, [refresh]);
 
   const createProject = async (name: string, color_hex: string) => {
     await apiFetch("/projects", {
@@ -108,7 +104,8 @@ export function useDepartments() {
   return { departments };
 }
 
-export function useCapacity(month: string) {
+/** week — ISO date string of any day in the target week (normalised to Monday server-side) */
+export function useCapacity(week: string) {
   const [entries, setEntries] = useState<CapacityEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -117,7 +114,7 @@ export function useCapacity(month: string) {
   const refresh = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await apiFetch<CapacityEntry[]>(`/capacity?month=${month}`);
+      const data = await apiFetch<CapacityEntry[]>(`/capacity?week=${week}`);
       setEntries(data);
       setError(null);
     } catch (e) {
@@ -125,13 +122,11 @@ export function useCapacity(month: string) {
     } finally {
       setLoading(false);
     }
-  }, [month]);
+  }, [week]);
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  useEffect(() => { refresh(); }, [refresh]);
 
-  const saveMonth = async (payload: MonthlyPayload) => {
+  const saveWeek = async (payload: WeeklyPayload) => {
     setSaving(true);
     try {
       const saved = await apiFetch<CapacityEntry[]>("/capacity/bulk", {
@@ -148,5 +143,5 @@ export function useCapacity(month: string) {
     }
   };
 
-  return { entries, loading, saving, error, refresh, saveMonth };
+  return { entries, loading, saving, error, refresh, saveWeek };
 }

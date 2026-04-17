@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Employee, Project, CapacityEntry, MONTHLY_CAPACITY } from "../types";
+import { Employee, Project, CapacityEntry, WEEKLY_CAPACITY } from "../types";
 
 interface Props {
   employees: Employee[];
@@ -83,12 +83,12 @@ export default function UtilisationChart({
       {/* Employee utilisation */}
       <section>
         <h2 className="text-base font-semibold text-gray-700 mb-3">
-          Employee Utilisation vs {MONTHLY_CAPACITY}h capacity
+          Employee Utilisation vs {WEEKLY_CAPACITY}h weekly capacity
         </h2>
         <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 space-y-3">
           {sortedEmployees.map((emp) => {
             const h = empHours[emp.id] ?? 0;
-            const pct = (h / MONTHLY_CAPACITY) * 100;
+            const pct = (h / WEEKLY_CAPACITY) * 100;
             const barW = Math.min(pct, 120); // cap visual at 120% for overflow indicator
             return (
               <div key={emp.id} className="flex items-center gap-3">
@@ -129,7 +129,7 @@ export default function UtilisationChart({
               &gt;100% (over capacity)
             </span>
             <span className="flex items-center gap-1 ml-auto">
-              <span className="text-gray-400">| = {MONTHLY_CAPACITY}h threshold</span>
+              <span className="text-gray-400">| = {WEEKLY_CAPACITY}h threshold</span>
             </span>
           </div>
         </div>
