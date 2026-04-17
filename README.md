@@ -1,13 +1,14 @@
 # Capacity Planning
 
-A full-stack web application for collecting and visualising weekly employee capacity data across projects.
+A full-stack web application for collecting and visualising weekly employee capacity data across projects, with public holiday support.
 
 ## Features
 
 - **Weekly Entry** — spreadsheet-style matrix (employees × projects) with hours inputs, row/column totals, colour-coded utilisation, and one-click save
-- **Utilisation Charts** — horizontal bar charts showing employee utilisation vs. 40 h weekly capacity and hours per project
-- **Manage** — add and soft-delete employees and projects in real time
-- Working week defined as **Monday – Friday**; week selector displays e.g. "21 Apr – 25 Apr 2026"
+- **Public Holidays** — holiday days shown as read-only red columns in the matrix; available capacity automatically reduced (8 h per holiday day)
+- **Utilisation Charts** — horizontal bar charts showing employee utilisation vs. available weekly capacity and hours per project
+- **Manage** — add/remove employees, projects, and public holidays in real time
+- Working week defined as **Monday – Friday (40 h)**; week selector displays e.g. "21 Apr – 25 Apr 2026"
 - Department filter and week selector shared across all tabs
 
 ## Tech Stack
@@ -34,11 +35,13 @@ capacity-planning/
 │   │   └── api/
 │   │       ├── capacity.py    # POST /bulk, GET /?week=
 │   │       ├── employees.py   # CRUD + /departments
-│   │       └── projects.py    # CRUD
+│   │       ├── projects.py    # CRUD
+│   │       └── holidays.py    # CRUD public holidays
 │   ├── alembic/               # Database migrations
 │   │   └── versions/
 │   │       ├── 0001_initial_schema.py
-│   │       └── 0002_rename_month_to_week.py
+│   │       ├── 0002_rename_month_to_week.py
+│   │       └── 0003_add_public_holidays.py
 │   ├── Dockerfile             # Production image (uv + uvicorn)
 │   ├── seed.py                # Seed script — employees & projects
 │   └── pyproject.toml         # uv dependencies
@@ -46,9 +49,9 @@ capacity-planning/
 │   ├── src/
 │   │   ├── App.tsx            # Root: tabs, week selector, dept filter
 │   │   ├── components/
-│   │   │   ├── WeeklyEntry.tsx        # Tab 1: matrix form
+│   │   │   ├── WeeklyEntry.tsx        # Tab 1: matrix + holiday columns
 │   │   │   ├── UtilisationChart.tsx   # Tab 2: bar charts
-│   │   │   └── ManageTab.tsx          # Tab 3: add/remove
+│   │   │   └── ManageTab.tsx          # Tab 3: employees, projects, holidays
 │   │   ├── hooks/useApi.ts    # API fetch hooks
 │   │   └── types/index.ts     # TypeScript types + capacity constants
 │   ├── Dockerfile             # Multi-stage: Node build → nginx runtime
@@ -68,10 +71,12 @@ capacity-planning/
 
 ```
 Department  ──<  Employee  ──<  CapacityEntry  >──  Project
-                                 (week, hours)
+
+PublicHoliday  (date, name)
 ```
 
 - **CapacityEntry.week** is always stored as the **Monday** of the ISO week (normalised server-side).
+- **PublicHoliday** stores a specific calendar date and name. When one or more holidays fall within the selected Mon–Fri week, each deducts 8 h from the available capacity and appears as a read-only column in the matrix.
 - Unique constraint on `(week, employee_id, project_id)` — bulk upsert is fully idempotent.
 - All deletes are **soft** (`is_active = False`); records are never hard-deleted.
 
@@ -79,7 +84,7 @@ Department  ──<  Employee  ──<  CapacityEntry  >──  Project
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/capacity/bulk` | Upsert a list of capacity entries for a week |
+| `POST` | `/api/capacity/bulk` | Upsert capacity entries for a week |
 | `GET` | `/api/capacity?week=YYYY-MM-DD` | Fetch all entries for the week containing that date |
 | `GET` | `/api/employees` | List active employees (with department) |
 | `POST` | `/api/employees` | Create employee |
@@ -88,18 +93,50 @@ Department  ──<  Employee  ──<  CapacityEntry  >──  Project
 | `GET` | `/api/projects` | List active projects |
 | `POST` | `/api/projects` | Create project |
 | `DELETE` | `/api/projects/{id}` | Soft-delete project |
+| `GET` | `/api/holidays` | List all active public holidays |
+| `GET` | `/api/holidays?week=YYYY-MM-DD` | List holidays within that Mon–Fri week |
+| `POST` | `/api/holidays` | Create public holiday |
+| `DELETE` | `/api/holidays/{id}` | Soft-delete public holiday |
 
 Interactive docs: **http://localhost:8000/docs**
 
 ## Capacity Thresholds
 
-Working week = **Monday – Friday (40 h)**
+Working week = **Monday – Friday (40 h)**. When public holidays fall in the week, the available capacity is reduced by **8 h per holiday day**.
 
-| Condition | Hours | UI colour |
-|-----------|-------|-----------|
-| Over capacity | > 40 h | Red |
-| Fully planned | 38 – 40 h | Green |
-| Under-planned | < 38 h | Amber |
+| Condition | Project hours | UI colour |
+|-----------|--------------|-----------|
+| Over capacity | > available hours | Red |
+| Fully planned | ≥ available − 2 h | Green |
+| Under-planned | < available − 2 h | Amber |
+
+Examples:
+
+| Holidays in week | Available | Fully planned at |
+|-----------------|-----------|-----------------|
+| 0 | 40 h | ≥ 38 h |
+| 1 | 32 h | ≥ 30 h |
+| 2 | 24 h | ≥ 22 h |
+
+---
+
+## Public Holidays
+
+Public holidays are managed in **Tab 3 → Public Holidays** section.
+
+### Adding a holiday
+1. Go to **Manage** tab
+2. In the **Public Holidays** section, pick a date and enter a name (e.g. "Christmas Day")
+3. Click **Add Holiday**
+
+### Effect on the planner
+When a public holiday falls within the selected Mon–Fri week:
+- A **red notice banner** appears above the matrix listing the holiday names and dates
+- A **red read-only column** (8 h, cannot be edited) is added to the matrix for each holiday
+- The **"Available / week"** stat card shows the reduced capacity
+- Row colour-coding compares **project hours only** against the reduced capacity
+- The **Weekly Entry tab** shows a red badge with the holiday count
+- The **Utilisation Chart** adjusts the capacity bar and label accordingly
 
 ---
 
@@ -154,7 +191,7 @@ The Vite dev server proxies `/api/*` requests to `http://localhost:8000`.
 
 ## Seed Data
 
-`backend/seed.py` is idempotent — safe to run multiple times.
+`backend/seed.py` is idempotent — safe to run multiple times. Public holidays are not seeded (they vary by country/region).
 
 **Employees**
 
