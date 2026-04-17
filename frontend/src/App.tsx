@@ -33,7 +33,7 @@ function addWeeks(isoDate: string, n: number): string {
 function formatWeekRange(monday: string): string {
   const start = new Date(monday);
   const end = new Date(monday);
-  end.setDate(start.getDate() + 6);
+  end.setDate(start.getDate() + 4); // Mon → Fri (working week)
 
   const fmt = (d: Date) =>
     d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
