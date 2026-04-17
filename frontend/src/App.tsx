@@ -9,6 +9,7 @@ import {
   useDepartments,
   useCapacity,
   useHolidays,
+  useUsers,
   setTokenProvider,
 } from "./hooks/useApi";
 import { useAuth } from "./auth/AuthContext";
@@ -72,6 +73,7 @@ export default function App() {
   const { departments } = useDepartments();
   const { entries } = useCapacity(week);
   const { holidays, createHoliday, deleteHoliday } = useHolidays();
+  const { users, createUser, updateRole, deleteUser } = useUsers();
 
   const weekHolidays = useMemo(() => {
     const mon = new Date(week);
@@ -206,12 +208,16 @@ export default function App() {
                 projects={projects}
                 departments={departments}
                 holidays={holidays}
+                users={users}
                 onCreateEmployee={createEmployee}
                 onDeleteEmployee={deleteEmployee}
                 onCreateProject={createProject}
                 onDeleteProject={deleteProject}
                 onCreateHoliday={createHoliday}
                 onDeleteHoliday={deleteHoliday}
+                onCreateUser={createUser}
+                onUpdateUserRole={updateRole}
+                onDeleteUser={deleteUser}
               />
             )}
           </>

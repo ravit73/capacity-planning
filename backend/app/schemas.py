@@ -91,7 +91,7 @@ class PublicHolidayOut(BaseModel):
 # User
 class UserOut(BaseModel):
     id: int
-    azure_oid: str
+    azure_oid: str | None
     email: str
     display_name: str
     role: str
@@ -101,12 +101,27 @@ class UserOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+def _validate_role_value(v: str) -> str:
+    if v not in ("admin", "editor", "reader"):
+        raise ValueError("role must be admin, editor, or reader")
+    return v
+
+
+class UserCreate(BaseModel):
+    email: str
+    display_name: str = ""
+    role: str = "reader"
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        return _validate_role_value(v)
+
+
 class UserRoleUpdate(BaseModel):
     role: str
 
     @field_validator("role")
     @classmethod
     def validate_role(cls, v: str) -> str:
-        if v not in ("admin", "editor", "reader"):
-            raise ValueError("role must be admin, editor, or reader")
-        return v
+        return _validate_role_value(v)

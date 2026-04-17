@@ -1,17 +1,21 @@
 import { useState } from "react";
-import { Employee, Project, Department, PublicHoliday } from "../types";
+import { Employee, Project, Department, PublicHoliday, AppUser } from "../types";
 
 interface Props {
   employees: Employee[];
   projects: Project[];
   departments: Department[];
   holidays: PublicHoliday[];
+  users: AppUser[];
   onCreateEmployee: (name: string, deptId: number) => Promise<void>;
   onDeleteEmployee: (id: number) => Promise<void>;
   onCreateProject: (name: string, colorHex: string) => Promise<void>;
   onDeleteProject: (id: number) => Promise<void>;
   onCreateHoliday: (date: string, name: string) => Promise<void>;
   onDeleteHoliday: (id: number) => Promise<void>;
+  onCreateUser: (email: string, display_name: string, role: string) => Promise<void>;
+  onUpdateUserRole: (id: number, role: string) => Promise<void>;
+  onDeleteUser: (id: number) => Promise<void>;
 }
 
 const PRESET_COLORS = [
@@ -58,12 +62,16 @@ export default function ManageTab({
   projects,
   departments,
   holidays,
+  users,
   onCreateEmployee,
   onDeleteEmployee,
   onCreateProject,
   onDeleteProject,
   onCreateHoliday,
   onDeleteHoliday,
+  onCreateUser,
+  onUpdateUserRole,
+  onDeleteUser,
 }: Props) {
   const [empName, setEmpName] = useState("");
   const [empDept, setEmpDept] = useState<number>(departments[0]?.id ?? 0);
@@ -79,6 +87,12 @@ export default function ManageTab({
   const [holName, setHolName] = useState("");
   const [holLoading, setHolLoading] = useState(false);
   const [holError, setHolError] = useState<string | null>(null);
+
+  const [usrEmail, setUsrEmail] = useState("");
+  const [usrDisplayName, setUsrDisplayName] = useState("");
+  const [usrRole, setUsrRole] = useState("reader");
+  const [usrLoading, setUsrLoading] = useState(false);
+  const [usrError, setUsrError] = useState<string | null>(null);
 
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -109,6 +123,23 @@ export default function ManageTab({
       setProjError(String(err));
     } finally {
       setProjLoading(false);
+    }
+  };
+
+  const handleAddUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!usrEmail.trim()) return;
+    setUsrLoading(true);
+    setUsrError(null);
+    try {
+      await onCreateUser(usrEmail.trim(), usrDisplayName.trim(), usrRole);
+      setUsrEmail("");
+      setUsrDisplayName("");
+      setUsrRole("reader");
+    } catch (err) {
+      setUsrError(String(err));
+    } finally {
+      setUsrLoading(false);
     }
   };
 
@@ -328,6 +359,83 @@ export default function ManageTab({
             </button>
           </div>
           {holError && <p className="text-xs text-red-500">{holError}</p>}
+        </form>
+      </section>
+
+      {/* Users — spans full width */}
+      <section className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden lg:col-span-2">
+        <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center gap-2">
+          <h2 className="font-semibold text-gray-700">Users</h2>
+          <span className="text-xs text-gray-400 ml-1">— pre-provisioned accounts; login via Microsoft</span>
+        </div>
+
+        <ul className="divide-y divide-gray-100 max-h-64 overflow-y-auto">
+          {users.map((u) => (
+            <li key={u.id} className="flex items-center gap-3 px-4 py-2.5 flex-wrap">
+              <Avatar name={u.display_name || u.email} />
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-sm text-gray-900 truncate">{u.display_name}</div>
+                <div className="text-xs text-gray-400 truncate">{u.email}</div>
+              </div>
+              <select
+                value={u.role}
+                onChange={(e) => onUpdateUserRole(u.id, e.target.value)}
+                className="border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              >
+                <option value="admin">admin</option>
+                <option value="editor">editor</option>
+                <option value="reader">reader</option>
+              </select>
+              <button
+                onClick={() => onDeleteUser(u.id)}
+                className="text-xs text-gray-400 hover:text-red-500 transition-colors px-2 py-1 rounded hover:bg-red-50"
+                title="Deactivate user"
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+          {users.length === 0 && (
+            <li className="px-4 py-6 text-center text-gray-400 text-sm">No users provisioned yet.</li>
+          )}
+        </ul>
+
+        <form onSubmit={handleAddUser} className="border-t border-gray-200 p-4 space-y-2">
+          <div className="text-sm font-medium text-gray-600 mb-2">Pre-provision user</div>
+          <div className="flex gap-2 flex-wrap">
+            <input
+              type="email"
+              value={usrEmail}
+              onChange={(e) => setUsrEmail(e.target.value)}
+              placeholder="Email address"
+              required
+              className="flex-1 min-w-[200px] border border-gray-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            />
+            <input
+              type="text"
+              value={usrDisplayName}
+              onChange={(e) => setUsrDisplayName(e.target.value)}
+              placeholder="Display name (optional)"
+              className="flex-1 min-w-[160px] border border-gray-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            />
+            <select
+              value={usrRole}
+              onChange={(e) => setUsrRole(e.target.value)}
+              className="border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            >
+              <option value="reader">reader</option>
+              <option value="editor">editor</option>
+              <option value="admin">admin</option>
+            </select>
+            <button
+              type="submit"
+              disabled={usrLoading || !usrEmail.trim()}
+              className="px-4 py-1.5 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+            >
+              {usrLoading ? "Adding…" : "Add User"}
+            </button>
+          </div>
+          {usrError && <p className="text-xs text-red-500">{usrError}</p>}
         </form>
       </section>
     </div>

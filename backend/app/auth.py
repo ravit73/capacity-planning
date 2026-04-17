@@ -62,7 +62,6 @@ async def _validate_token(token: str) -> dict:
             token,
             public_key,
             algorithms=["RS256"],
-            # Accept both bare GUID and api:// URI as audience
             audience=[settings.azure_client_id, f"api://{settings.azure_client_id}"],
             options={"verify_exp": True},
         )
@@ -80,7 +79,6 @@ async def get_current_user(
     settings = get_settings()
 
     if not settings.auth_enabled:
-        # Dev mode: return an in-memory admin user (no DB required)
         return User(
             id=0,
             azure_oid="dev",
@@ -96,28 +94,48 @@ async def get_current_user(
     claims = await _validate_token(credentials.credentials)
 
     oid = claims.get("oid") or claims.get("sub", "")
-    email = claims.get("preferred_username") or claims.get("email") or ""
+    email = (claims.get("preferred_username") or claims.get("email") or "").lower().strip()
     display_name = claims.get("name") or email
 
-    result = await db.execute(select(User).where(User.azure_oid == oid))
-    user = result.scalar_one_or_none()
-
-    if user is None:
-        # First user ever becomes admin; everyone else starts as reader
-        count_result = await db.execute(select(func.count(User.id)))
-        count = count_result.scalar() or 0
-        role = UserRole.admin.value if count == 0 else UserRole.reader.value
-        user = User(azure_oid=oid, email=email, display_name=display_name, role=role)
+    # ── Bootstrap: first-ever login creates the admin ──────────────────────
+    count_result = await db.execute(select(func.count(User.id)))
+    if (count_result.scalar() or 0) == 0:
+        user = User(azure_oid=oid, email=email, display_name=display_name, role=UserRole.admin.value)
         db.add(user)
         await db.commit()
         await db.refresh(user)
-    elif not user.is_active:
-        raise HTTPException(status_code=403, detail="Account is deactivated")
-    else:
-        if user.email != email or user.display_name != display_name:
-            user.email = email
+        return user
+
+    # ── Normal flow: look up pre-provisioned user ───────────────────────────
+    # 1. Try by azure_oid (fastest path after first login)
+    result = await db.execute(select(User).where(User.azure_oid == oid))
+    user = result.scalar_one_or_none()
+
+    # 2. Fall back to email match (pre-provisioned account, oid not yet bound)
+    if user is None and email:
+        result = await db.execute(
+            select(User).where(func.lower(User.email) == email)
+        )
+        user = result.scalar_one_or_none()
+        if user is not None and not user.azure_oid:
+            # Bind the Microsoft OID on first login so future lookups use path 1
+            user.azure_oid = oid
             user.display_name = display_name
             await db.commit()
+
+    if user is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied. Your account has not been provisioned. Contact your administrator.",
+        )
+
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account is deactivated. Contact your administrator.")
+
+    # Keep display name in sync with the Microsoft profile
+    if display_name and user.display_name != display_name:
+        user.display_name = display_name
+        await db.commit()
 
     return user
 

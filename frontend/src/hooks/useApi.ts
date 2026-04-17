@@ -6,6 +6,7 @@ import {
   WeeklyPayload,
   Department,
   PublicHoliday,
+  AppUser,
 } from "../types";
 
 const BASE = "/api";
@@ -195,4 +196,46 @@ export function useHolidays() {
   };
 
   return { holidays, loading, createHoliday, deleteHoliday, refresh };
+}
+
+export function useUsers() {
+  const [users, setUsers] = useState<AppUser[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    try {
+      setLoading(true);
+      const data = await apiFetch<AppUser[]>("/users");
+      setUsers(data);
+    } catch {
+      // non-fatal — non-admins don't have access
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const createUser = async (email: string, display_name: string, role: string) => {
+    await apiFetch("/users", {
+      method: "POST",
+      body: JSON.stringify({ email, display_name, role }),
+    });
+    await refresh();
+  };
+
+  const updateRole = async (id: number, role: string) => {
+    await apiFetch(`/users/${id}/role`, {
+      method: "PUT",
+      body: JSON.stringify({ role }),
+    });
+    await refresh();
+  };
+
+  const deleteUser = async (id: number) => {
+    await apiFetch(`/users/${id}`, { method: "DELETE" });
+    await refresh();
+  };
+
+  return { users, loading, createUser, updateRole, deleteUser, refresh };
 }
