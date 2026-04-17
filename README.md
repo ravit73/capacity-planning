@@ -1,13 +1,15 @@
 # Capacity Planning
 
-A full-stack web application for collecting and visualising weekly employee capacity data across projects, with public holiday support.
+A full-stack web application for collecting and visualising weekly employee capacity data across projects, with public holiday support and Microsoft Entra ID (Azure AD) authentication.
 
 ## Features
 
+- **Microsoft Login** — sign in with your organisation's Microsoft account; no separate user registration
+- **Role-based access control** — three roles: `admin` (full access), `editor` (capacity entry), `reader` (view only)
 - **Weekly Entry** — spreadsheet-style matrix (employees × projects) with hours inputs, row/column totals, colour-coded utilisation, and one-click save
 - **Public Holidays** — holiday days shown as read-only red columns in the matrix; available capacity automatically reduced (8 h per holiday day)
 - **Utilisation Charts** — horizontal bar charts showing employee utilisation vs. available weekly capacity and hours per project
-- **Manage** — add/remove employees, projects, and public holidays in real time
+- **Manage** — add/remove employees, projects, and public holidays in real time (admin only)
 - Working week defined as **Monday – Friday (40 h)**; week selector displays e.g. "21 Apr – 25 Apr 2026"
 - Department filter and week selector shared across all tabs
 
@@ -16,9 +18,11 @@ A full-stack web application for collecting and visualising weekly employee capa
 | Layer | Technology |
 |-------|------------|
 | Backend | Python 3.11, FastAPI, Pydantic v2, SQLAlchemy 2 (async), Alembic |
+| Auth (backend) | PyJWT, Microsoft Entra ID JWKS validation |
 | Database | PostgreSQL 16 |
 | Package manager | [uv](https://docs.astral.sh/uv/) |
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS |
+| Auth (frontend) | MSAL React (`@azure/msal-browser`, `@azure/msal-react`) |
 | Container runtime | Docker / nginx |
 
 ## Project Structure
@@ -27,35 +31,46 @@ A full-stack web application for collecting and visualising weekly employee capa
 capacity-planning/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py            # FastAPI app + CORS
-│   │   ├── config.py          # Settings (reads .env)
+│   │   ├── main.py            # FastAPI app + CORS (configurable origins)
+│   │   ├── config.py          # Settings (reads .env): DB, Azure AD, auth flag
 │   │   ├── database.py        # Async engine & session factory
-│   │   ├── models.py          # SQLAlchemy ORM models
+│   │   ├── models.py          # SQLAlchemy ORM models (incl. User)
 │   │   ├── schemas.py         # Pydantic v2 request/response schemas
+│   │   ├── auth.py            # JWT validation, get_current_user, require_roles
 │   │   └── api/
 │   │       ├── capacity.py    # POST /bulk, GET /?week=
 │   │       ├── employees.py   # CRUD + /departments
 │   │       ├── projects.py    # CRUD
-│   │       └── holidays.py    # CRUD public holidays
+│   │       ├── holidays.py    # CRUD public holidays
+│   │       └── users.py       # GET /me, list users, update role
 │   ├── alembic/               # Database migrations
 │   │   └── versions/
 │   │       ├── 0001_initial_schema.py
 │   │       ├── 0002_rename_month_to_week.py
-│   │       └── 0003_add_public_holidays.py
+│   │       ├── 0003_add_public_holidays.py
+│   │       └── 0004_add_users.py
 │   ├── Dockerfile             # Production image (uv + uvicorn)
 │   ├── seed.py                # Seed script — employees & projects
+│   ├── .env.example           # Required environment variables
 │   └── pyproject.toml         # uv dependencies
 ├── frontend/
 │   ├── src/
-│   │   ├── App.tsx            # Root: tabs, week selector, dept filter
+│   │   ├── main.tsx           # Entry point — wraps app in AuthProvider
+│   │   ├── App.tsx            # Root: tabs, week selector, dept filter, auth state
+│   │   ├── auth/
+│   │   │   ├── authConfig.ts  # MSAL configuration (clientId, tenantId, scopes)
+│   │   │   ├── AuthContext.ts # React context + useAuth hook
+│   │   │   └── AuthProvider.tsx # MsalProvider wrapper (or dev mock)
 │   │   ├── components/
-│   │   │   ├── WeeklyEntry.tsx        # Tab 1: matrix + holiday columns
+│   │   │   ├── WeeklyEntry.tsx        # Tab 1: matrix + role-based controls
 │   │   │   ├── UtilisationChart.tsx   # Tab 2: bar charts
-│   │   │   └── ManageTab.tsx          # Tab 3: employees, projects, holidays
-│   │   ├── hooks/useApi.ts    # API fetch hooks
-│   │   └── types/index.ts     # TypeScript types + capacity constants
+│   │   │   ├── ManageTab.tsx          # Tab 3: employees, projects, holidays
+│   │   │   └── LoginPage.tsx          # Microsoft sign-in screen
+│   │   ├── hooks/useApi.ts    # API fetch hooks with Bearer token injection
+│   │   └── types/index.ts     # TypeScript types + capacity constants + AppUser
 │   ├── Dockerfile             # Multi-stage: Node build → nginx runtime
 │   ├── nginx.conf             # SPA serving + /api proxy template
+│   ├── .env.example           # Required Vite environment variables
 │   └── vite.config.ts         # Dev proxy: /api → localhost:8000
 ├── infra/
 │   └── provision.sh           # One-shot Azure CLI provisioning script
@@ -73,30 +88,67 @@ capacity-planning/
 Department  ──<  Employee  ──<  CapacityEntry  >──  Project
 
 PublicHoliday  (date, name)
+
+User  (azure_oid, email, display_name, role)
 ```
 
 - **CapacityEntry.week** is always stored as the **Monday** of the ISO week (normalised server-side).
 - **PublicHoliday** stores a specific calendar date and name. When one or more holidays fall within the selected Mon–Fri week, each deducts 8 h from the available capacity and appears as a read-only column in the matrix.
+- **User** is auto-created on first login from the Microsoft token claims (`oid`, `preferred_username`, `name`). The first user to log in becomes `admin`; subsequent users start as `reader`. Role is updatable by any admin via `PUT /api/users/{id}/role`.
 - Unique constraint on `(week, employee_id, project_id)` — bulk upsert is fully idempotent.
 - All deletes are **soft** (`is_active = False`); records are never hard-deleted.
 
+## Authentication & Roles
+
+Authentication uses **Microsoft Entra ID** (formerly Azure AD). The backend validates Bearer tokens against the tenant's JWKS endpoint; the frontend uses MSAL to acquire tokens silently.
+
+### Roles
+
+| Role | Weekly Entry | Utilisation | Manage tab | User management |
+|------|-------------|-------------|------------|-----------------|
+| `reader` | View only (disabled inputs) | ✓ | Hidden | — |
+| `editor` | Full edit + save | ✓ | Hidden | — |
+| `admin` | Full edit + save | ✓ | Full access | Change roles |
+
+### Promoting a user
+
+Roles are managed via the API (no UI admin panel yet):
+
+```bash
+# List all users
+curl -H "Authorization: Bearer <token>" https://your-app/api/users
+
+# Promote to editor
+curl -X PUT \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"role": "editor"}' \
+  https://your-app/api/users/2/role
+```
+
 ## API Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/capacity/bulk` | Upsert capacity entries for a week |
-| `GET` | `/api/capacity?week=YYYY-MM-DD` | Fetch all entries for the week containing that date |
-| `GET` | `/api/employees` | List active employees (with department) |
-| `POST` | `/api/employees` | Create employee |
-| `DELETE` | `/api/employees/{id}` | Soft-delete employee |
-| `GET` | `/api/employees/departments` | List all departments |
-| `GET` | `/api/projects` | List active projects |
-| `POST` | `/api/projects` | Create project |
-| `DELETE` | `/api/projects/{id}` | Soft-delete project |
-| `GET` | `/api/holidays` | List all active public holidays |
-| `GET` | `/api/holidays?week=YYYY-MM-DD` | List holidays within that Mon–Fri week |
-| `POST` | `/api/holidays` | Create public holiday |
-| `DELETE` | `/api/holidays/{id}` | Soft-delete public holiday |
+All endpoints require a valid `Authorization: Bearer <token>` header. Write operations additionally require the minimum role shown.
+
+| Method | Path | Min. role | Description |
+|--------|------|-----------|-------------|
+| `GET` | `/api/users/me` | any | Current user info and role |
+| `GET` | `/api/users` | admin | List all users |
+| `PUT` | `/api/users/{id}/role` | admin | Update a user's role |
+| `PATCH` | `/api/users/{id}/active` | admin | Activate / deactivate a user |
+| `POST` | `/api/capacity/bulk` | editor | Upsert capacity entries for a week |
+| `GET` | `/api/capacity?week=YYYY-MM-DD` | any | Fetch all entries for the week |
+| `GET` | `/api/employees` | any | List active employees (with department) |
+| `POST` | `/api/employees` | admin | Create employee |
+| `DELETE` | `/api/employees/{id}` | admin | Soft-delete employee |
+| `GET` | `/api/employees/departments` | any | List all departments |
+| `GET` | `/api/projects` | any | List active projects |
+| `POST` | `/api/projects` | admin | Create project |
+| `DELETE` | `/api/projects/{id}` | admin | Soft-delete project |
+| `GET` | `/api/holidays` | any | List all active public holidays |
+| `GET` | `/api/holidays?week=YYYY-MM-DD` | any | List holidays within that Mon–Fri week |
+| `POST` | `/api/holidays` | admin | Create public holiday |
+| `DELETE` | `/api/holidays/{id}` | admin | Soft-delete public holiday |
 
 Interactive docs: **http://localhost:8000/docs**
 
@@ -122,7 +174,7 @@ Examples:
 
 ## Public Holidays
 
-Public holidays are managed in **Tab 3 → Public Holidays** section.
+Public holidays are managed in **Manage tab → Public Holidays** section (admin only).
 
 ### Adding a holiday
 1. Go to **Manage** tab
@@ -148,7 +200,7 @@ When a public holiday falls within the selected Mon–Fri week:
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) — Python package manager
 - [Node.js](https://nodejs.org/) 18+
 
-### Quick start (all-in-one)
+### Quick start (auth disabled — no Azure AD needed)
 
 ```bash
 ./start.sh
@@ -161,6 +213,8 @@ This script:
 4. Starts the FastAPI backend on **http://localhost:8000**
 5. Starts the Vite dev server on **http://localhost:5173**
 
+When `AUTH_ENABLED=false` (backend) and `VITE_AUTH_ENABLED=false` (frontend), all requests are treated as a dev admin — no Microsoft login required.
+
 ### Manual setup
 
 **1. Database**
@@ -171,7 +225,9 @@ docker compose up -d db
 **2. Backend**
 ```bash
 cd backend
-echo "DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/capacity_planning" > .env
+cp .env.example .env
+# Edit .env — at minimum set DATABASE_URL
+# For local dev without Azure AD: AUTH_ENABLED=false
 uv sync                        # install dependencies
 uv run alembic upgrade head    # run migrations
 uv run python seed.py          # seed initial data
@@ -181,11 +237,50 @@ uv run uvicorn app.main:app --reload --port 8000
 **3. Frontend**
 ```bash
 cd frontend
+cp .env.example .env
+# For local dev without Azure AD: VITE_AUTH_ENABLED=false
 npm install
 npm run dev   # http://localhost:5173
 ```
 
 The Vite dev server proxies `/api/*` requests to `http://localhost:8000`.
+
+### Enabling real Microsoft authentication locally
+
+1. [Register an app in Azure AD](#azure-ad-app-registration)
+2. Set in `backend/.env`:
+   ```
+   AUTH_ENABLED=true
+   AZURE_TENANT_ID=<your-tenant-id>
+   AZURE_CLIENT_ID=<your-client-id>
+   ```
+3. Set in `frontend/.env`:
+   ```
+   VITE_AUTH_ENABLED=true
+   VITE_AZURE_TENANT_ID=<your-tenant-id>
+   VITE_AZURE_CLIENT_ID=<your-client-id>
+   ```
+
+---
+
+## Azure AD App Registration
+
+One app registration covers both the frontend SPA and the backend API.
+
+1. **Azure Portal → Azure Active Directory → App registrations → New registration**
+   - Name: `capacity-planning`
+   - Supported account types: *Accounts in this organisational directory only*
+   - Redirect URI: `Single-page application (SPA)` → `http://localhost:5173`
+
+2. **Expose an API** → Add a scope:
+   - Scope name: `access_as_user`
+   - Who can consent: Admins and users
+
+3. **API permissions** → Add a permission → My APIs → select your app → `access_as_user`
+
+4. Note the **Application (client) ID** and **Directory (tenant) ID** — use these in both `.env` files.
+
+5. For production, add the deployed frontend URL as an additional Redirect URI.
 
 ---
 
@@ -270,23 +365,23 @@ export PG_PASSWORD="my-strong-password"
 ./infra/provision.sh
 ```
 
-**What the script does:**
-1. Creates the resource group
-2. Creates Azure Container Registry
-3. Creates PostgreSQL Flexible Server (~3 min)
-4. Creates the Container Apps Environment + Log Analytics workspace
-5. Builds and pushes both images via `az acr build` (no local Docker needed)
-6. Deploys the backend Container App (`DATABASE_URL` stored as a secret)
-7. Deploys the frontend Container App (`BACKEND_URL` injected from the backend FQDN)
-8. Runs the seed job as a Container Apps Job
-
-**Customise** the variables at the top of `infra/provision.sh` before running:
+After provisioning, set the Azure AD environment variables on the backend Container App:
 
 ```bash
-LOCATION="westeurope"               # Azure region
-RG="rg-capacity-planning"           # Resource group name
-ACR_NAME="capacityplanningacr"      # Globally unique, lowercase, no hyphens
-PG_SERVER="psql-capacity-planning"  # Globally unique
+az containerapp secret set \
+  --name capacity-backend \
+  --resource-group rg-capacity-planning \
+  --secrets \
+    "database-url=postgresql+asyncpg://..." \
+    "azure-tenant-id=<tenant-id>" \
+    "azure-client-id=<client-id>"
+
+az containerapp update \
+  --name capacity-backend \
+  --resource-group rg-capacity-planning \
+  --set-env-vars \
+    AZURE_TENANT_ID=secretref:azure-tenant-id \
+    AZURE_CLIENT_ID=secretref:azure-client-id
 ```
 
 ---
@@ -360,13 +455,16 @@ az ad app federated-credential create --id "$APP_ID" --parameters '{
 | `AZURE_RESOURCE_GROUP` | `rg-capacity-planning` |
 | `ACA_ENVIRONMENT` | `cae-capacity-planning` |
 
-**4. Set the database secret on the backend Container App** (once, after provisioning):
+**4. Set the database and Azure AD secrets on the backend Container App** (once, after provisioning):
 
 ```bash
 az containerapp secret set \
   --name capacity-backend \
   --resource-group rg-capacity-planning \
-  --secrets "database-url=postgresql+asyncpg://USER:PASS@HOST/DB?ssl=require"
+  --secrets \
+    "database-url=postgresql+asyncpg://USER:PASS@HOST/DB?ssl=require" \
+    "azure-tenant-id=<your-tenant-id>" \
+    "azure-client-id=<your-client-id>"
 ```
 
 Push to `main` to trigger the first deployment.
