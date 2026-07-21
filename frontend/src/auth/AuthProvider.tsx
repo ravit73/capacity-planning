@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, ReactNode } from "react";
 import { MsalProvider, useMsal } from "@azure/msal-react";
 import { InteractionRequiredAuthError } from "@azure/msal-browser";
-import { msalInstance, loginRequest } from "./authConfig";
+import { msalInstance, msalConfigValid, loginRequest } from "./authConfig";
 import { AuthContext, AuthContextValue } from "./AuthContext";
 import { AppUser } from "../types";
 import { setTokenProvider } from "../hooks/useApi";
@@ -105,10 +105,41 @@ function MsalAuthProvider({ children }: { children: ReactNode }) {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
+// ── Misconfiguration screen ────────────────────────────────────────────────
+function MissingConfigScreen() {
+  return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+      <div className="bg-white border border-red-200 rounded-lg shadow-sm p-8 max-w-lg w-full">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+            <span className="text-red-600 text-lg font-bold">!</span>
+          </div>
+          <h1 className="text-lg font-bold text-gray-900">Azure AD not configured</h1>
+        </div>
+        <p className="text-sm text-gray-600 mb-4">
+          The frontend environment variables are missing. Create{" "}
+          <code className="bg-gray-100 px-1 py-0.5 rounded text-xs">frontend/.env</code> with:
+        </p>
+        <pre className="bg-gray-900 text-green-400 text-xs rounded p-4 overflow-x-auto mb-4">
+{`VITE_AZURE_CLIENT_ID=<your-client-id>
+VITE_AZURE_TENANT_ID=<your-tenant-id>`}
+        </pre>
+        <p className="text-xs text-gray-400">
+          For local dev without Azure AD, set{" "}
+          <code className="bg-gray-100 px-1 py-0.5 rounded">VITE_AUTH_ENABLED=false</code> instead.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ── Public export ──────────────────────────────────────────────────────────
 export function AuthProvider({ children }: { children: ReactNode }) {
   if (!AUTH_ENABLED) {
     return <DevAuthProvider>{children}</DevAuthProvider>;
+  }
+  if (!msalConfigValid) {
+    return <MissingConfigScreen />;
   }
   return (
     <MsalProvider instance={msalInstance}>

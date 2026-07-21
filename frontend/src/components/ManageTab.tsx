@@ -89,10 +89,14 @@ export default function ManageTab({
   const [holError, setHolError] = useState<string | null>(null);
 
   const [usrEmail, setUsrEmail] = useState("");
+  const [usrEmailTouched, setUsrEmailTouched] = useState(false);
   const [usrDisplayName, setUsrDisplayName] = useState("");
   const [usrRole, setUsrRole] = useState("reader");
   const [usrLoading, setUsrLoading] = useState(false);
   const [usrError, setUsrError] = useState<string | null>(null);
+
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(usrEmail.trim());
+  const emailInvalid = usrEmailTouched && usrEmail.trim() !== "" && !emailValid;
 
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -136,6 +140,7 @@ export default function ManageTab({
       setUsrEmail("");
       setUsrDisplayName("");
       setUsrRole("reader");
+      setUsrEmailTouched(false);
     } catch (err) {
       setUsrError(String(err));
     } finally {
@@ -403,14 +408,25 @@ export default function ManageTab({
         <form onSubmit={handleAddUser} className="border-t border-gray-200 p-4 space-y-2">
           <div className="text-sm font-medium text-gray-600 mb-2">Pre-provision user</div>
           <div className="flex gap-2 flex-wrap">
-            <input
-              type="email"
-              value={usrEmail}
-              onChange={(e) => setUsrEmail(e.target.value)}
-              placeholder="Email address"
-              required
-              className="flex-1 min-w-[200px] border border-gray-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-400"
-            />
+            <div className="flex-1 min-w-[200px] flex flex-col gap-1">
+              <input
+                type="text"
+                inputMode="email"
+                value={usrEmail}
+                onChange={(e) => setUsrEmail(e.target.value)}
+                onBlur={() => setUsrEmailTouched(true)}
+                placeholder="user@company.com"
+                required
+                className={`border rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 w-full ${
+                  emailInvalid
+                    ? "border-red-400 focus:ring-red-400"
+                    : "border-gray-200 focus:ring-indigo-400"
+                }`}
+              />
+              {emailInvalid && (
+                <span className="text-xs text-red-500">Enter a valid email address</span>
+              )}
+            </div>
             <input
               type="text"
               value={usrDisplayName}
@@ -429,7 +445,7 @@ export default function ManageTab({
             </select>
             <button
               type="submit"
-              disabled={usrLoading || !usrEmail.trim()}
+              disabled={usrLoading || !emailValid}
               className="px-4 py-1.5 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 transition-colors"
             >
               {usrLoading ? "Adding…" : "Add User"}
